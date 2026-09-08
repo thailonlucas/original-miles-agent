@@ -245,6 +245,27 @@ export async function saveTravelSchedule(tenantId: string, travelId: string, sta
   ]);
 }
 
+// Resumo livre da viagem (perfil do cliente, tipo de viagem, preferências etc.), cadastrado uma vez
+// pelo usuário (ver `routes/travel-summary-routes.ts`) e reaproveitado como contexto pelos agentes
+// `daily-schedule`/`schedule-suggestion` — ao contrário de `daily_schedule`/`approved_suggestions`,
+// não precisa do `withTravelScheduleLock` (não é lido+reescrito por múltiplas chamadas concorrentes,
+// só substituído inteiro por uma edição explícita do usuário).
+export async function getTravelSummary(tenantId: string, travelId: string, client: Queryable = getPool()): Promise<string | null> {
+  const { rows } = await client.query<{ summary: string | null }>(`select summary from travel where tenant_id = $1 and id = $2 limit 1`, [
+    tenantId,
+    travelId,
+  ]);
+  return rows[0]?.summary ?? null;
+}
+
+// Cria a linha em `travel` se ainda não existir (mesmo motivo de `ensureTravelExists` — vouchers
+// podem ser extraídos antes de qualquer daily_schedule, então `travel_id` pode não ter linha ainda
+// quando o usuário cadastra o resumo).
+export async function saveTravelSummary(tenantId: string, travelId: string, summary: string | null, userId: string): Promise<void> {
+  await ensureTravelExists(tenantId, travelId, userId);
+  await getPool().query(`update travel set summary = $1 where tenant_id = $2 and id = $3`, [summary, tenantId, travelId]);
+}
+
 export interface ScheduleSuggestionDecision {
   date: string; // YYYY-MM-DD
   period: 'morning' | 'afternoon' | 'night';

@@ -32,10 +32,16 @@ export async function suggestActivitiesForDay(
   vouchers: VoucherSummary[],
   decisionHistory: ScheduleSuggestionDecision[],
   tenantId: string,
+  prompt: string | null = null,
+  quantity = 3,
+  summary: string | null = null,
 ): Promise<ScheduleSuggestionResult> {
-  const { object } = await scheduleSuggestionAgent.generate(buildSuggestionUserMessage(day, existingDay, fullSchedule, vouchers, decisionHistory), {
-    instructions: buildSuggestionInstructions(),
-    requestContext: new RequestContext([['tenant_id', tenantId]]),
-  });
+  const { object } = await scheduleSuggestionAgent.generate(
+    buildSuggestionUserMessage(day, existingDay, fullSchedule, vouchers, decisionHistory, prompt, quantity, summary),
+    {
+      instructions: buildSuggestionInstructions(quantity, prompt, summary),
+      requestContext: new RequestContext([['tenant_id', tenantId]]),
+    },
+  );
   return object;
 }

@@ -25,10 +25,12 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
   openapi: {
     summary: 'Sugere atividades para um dia específico do roteiro de uma viagem',
     description:
-      'Recebe `travel_id` e `day` (YYYY-MM-DD). Pra cada período do dia (manhã/tarde/noite): se já houver evento confirmado no ' +
-      '`daily_schedule`, sugere atividades ADICIONAIS que façam sentido com o que já está agendado (ex: proximidade geográfica); se o ' +
-      'período está livre, sugere um punhado de opções plausíveis com base nos vouchers da viagem e no destino identificado. Não grava ' +
-      'nada em `travel.daily_schedule` — cada sugestão aprovada pelo usuário deve ser inserida no roteiro separadamente.',
+      'Recebe `travel_id` e `day` (YYYY-MM-DD). Opcionalmente aceita `prompt` (texto livre do cliente descrevendo o tipo de recomendação ' +
+      'que busca, ex: "passeio no parque", "dia na praia") e `quantity` (1 a 5, quantas sugestões gerar por período livre — default 3). ' +
+      'Pra cada período do dia (manhã/tarde/noite): se já houver evento confirmado no `daily_schedule`, sugere atividades ADICIONAIS que ' +
+      'façam sentido com o que já está agendado (ex: proximidade geográfica); se o período está livre, sugere um punhado de opções ' +
+      'plausíveis com base nos vouchers da viagem, no destino identificado e no `prompt` do cliente (se houver). Não grava nada em ' +
+      '`travel.daily_schedule` — cada sugestão aprovada pelo usuário deve ser inserida no roteiro separadamente.',
     tags: ['Schedule Suggestion'],
   },
   handler: async (c) => {
@@ -45,6 +47,8 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
     const body = await c.req.json().catch(() => null);
     const travelId = (body as { travel_id?: unknown } | null)?.travel_id;
     const day = (body as { day?: unknown } | null)?.day;
+    const rawPrompt = (body as { prompt?: unknown } | null)?.prompt;
+    const rawQuantity = (body as { quantity?: unknown } | null)?.quantity;
 
     if (typeof travelId !== 'string' || !travelId) {
       return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
@@ -52,6 +56,17 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
     if (typeof day !== 'string' || !DAY_REGEX.test(day)) {
       return c.json({ error: 'bad_request', message: '"day" é obrigatório e deve estar no formato YYYY-MM-DD.' }, 400);
     }
+    if (rawPrompt !== undefined && rawPrompt !== null && typeof rawPrompt !== 'string') {
+      return c.json({ error: 'bad_request', message: '"prompt", se enviado, deve ser uma string.' }, 400);
+    }
+    if (rawQuantity !== undefined && rawQuantity !== null && (typeof rawQuantity !== 'number' || !Number.isInteger(rawQuantity))) {
+      return c.json({ error: 'bad_request', message: '"quantity", se enviado, deve ser um número inteiro.' }, 400);
+    }
+
+    // Corta um prompt absurdamente longo em vez de rejeitar — evita gastar contexto do agente à
+    // toa sem travar o fluxo por causa de um texto colado sem querer.
+    const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim().slice(0, 500) || null : null;
+    const quantity = typeof rawQuantity === 'number' ? Math.min(5, Math.max(1, rawQuantity)) : 3;
 
     // `travel_id` sozinho não escopa por tenant — confirma que, SE a viagem já existir em
     // `travel`, ela pertence ao tenant do usuário autenticado (mesmo cuidado de
@@ -64,7 +79,7 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
     }
 
     try {
-      const suggestion = await suggestDayActivities(tenantId, travelId, day);
+      const suggestion = await suggestDayActivities(tenantId, travelId, day, prompt, quantity);
       return c.json(suggestion, 200);
     } catch (error) {
       logConversationError(travelId, `falha ao gerar sugestões de roteiro para o dia ${day}`, error);

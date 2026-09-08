@@ -37,8 +37,12 @@ export const dailyScheduleAgent = new Agent({
 
 // Reconstrói o roteiro do zero a partir de TODOS os vouchers fornecidos — usado quando não dá pra
 // fazer incremental (hoje, só depois de excluir um voucher, ver `rebuild-daily-schedule.ts`).
-export async function buildDailyScheduleFromScratch(vouchers: VoucherSummary[], tenantId: string): Promise<DailyScheduleUpdate> {
-  const { object } = await dailyScheduleAgent.generate(buildRebuildUserMessage(vouchers), {
+export async function buildDailyScheduleFromScratch(
+  vouchers: VoucherSummary[],
+  tenantId: string,
+  summary: string | null = null,
+): Promise<DailyScheduleUpdate> {
+  const { object } = await dailyScheduleAgent.generate(buildRebuildUserMessage(vouchers, summary), {
     instructions: buildRebuildInstructions(),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
   });
@@ -52,8 +56,9 @@ export async function applyVoucherToDailySchedule(
   vouchers: VoucherSummary[],
   newVoucherId: string,
   tenantId: string,
+  summary: string | null = null,
 ): Promise<DailyScheduleUpdate> {
-  const { object } = await dailyScheduleAgent.generate(buildIncrementalUserMessage(currentState, vouchers, newVoucherId), {
+  const { object } = await dailyScheduleAgent.generate(buildIncrementalUserMessage(currentState, vouchers, newVoucherId, summary), {
     instructions: buildIncrementalInstructions(),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
   });
@@ -64,8 +69,12 @@ export async function applyVoucherToDailySchedule(
 // mesmo agente/tool das funções acima ("openVoucher"), mas com um schema de saída próprio desse
 // fluxo (envelope { response, analysed_doc_ids }, ver `schema.ts`), por isso o override de
 // `structuredOutput` por chamada em vez de usar o `defaultOptions` do agente.
-export async function generateDailyScheduleReport(vouchers: VoucherSummary[], tenantId: string): Promise<DailyScheduleGenerateResult> {
-  const { object } = await dailyScheduleAgent.generate(buildGenerateUserMessage(vouchers), {
+export async function generateDailyScheduleReport(
+  vouchers: VoucherSummary[],
+  tenantId: string,
+  summary: string | null = null,
+): Promise<DailyScheduleGenerateResult> {
+  const { object } = await dailyScheduleAgent.generate(buildGenerateUserMessage(vouchers, summary), {
     instructions: buildGenerateInstructions(),
     structuredOutput: { schema: dailyScheduleGenerateResultSchema },
     requestContext: new RequestContext([['tenant_id', tenantId]]),

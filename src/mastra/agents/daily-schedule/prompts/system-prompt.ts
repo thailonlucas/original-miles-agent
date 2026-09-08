@@ -16,7 +16,8 @@ const COMMON_RULES = `## Regras por tipo de voucher
 - Se dois ou mais vouchers tocarem o mesmo evento (confirmando ou contradizendo o mesmo dado), preencha "observation" citando de qual voucher vem cada informação. Caso contrário, "observation" é null.
 - Se um evento já existente no roteiro atual tiver o campo "suggested": true, preserve esse campo (com o mesmo valor) ao reescrever/manter esse evento — nunca defina "suggested": true em um evento novo por conta própria, esse campo só existe em sugestões aprovadas pelo cliente.
 - **Só inclua no array de saída os dias que têm pelo menos um evento.** Não crie dias vazios — quem consome isso já sabe o range da viagem por "travel_start_at"/"travel_end_at" e trata qualquer dia fora do array como um dia sem evento.
-- "travel_start_at"/"travel_end_at" cobrem TODO o período conhecido da viagem, a partir das datas mais extremas encontradas nos vouchers abertos.`;
+- "travel_start_at"/"travel_end_at" cobrem TODO o período conhecido da viagem, a partir das datas mais extremas encontradas nos vouchers abertos.
+- Se houver um "Resumo geral da viagem" (mensagem do usuário), use-o só como contexto pra entender o perfil/estilo da viagem (ex: lua de mel, viagem em família) — ele NUNCA cria evento novo por conta própria; todo evento continua vindo exclusivamente de um voucher aberto.`;
 
 function formatVoucherList(vouchers: VoucherSummary[]): string {
   return JSON.stringify(
@@ -24,6 +25,10 @@ function formatVoucherList(vouchers: VoucherSummary[]): string {
     null,
     2,
   );
+}
+
+function formatSummary(summary: string | null): string {
+  return summary ? `Resumo geral da viagem (contexto do cliente, cadastrado uma vez para toda a viagem): "${summary}"` : '(nenhum resumo geral cadastrado para esta viagem)';
 }
 
 // Modo 1: reconstrói o roteiro inteiro a partir de TODOS os vouchers da viagem (usado só quando
@@ -39,8 +44,10 @@ export function buildRebuildInstructions(): string {
 ${COMMON_RULES}`;
 }
 
-export function buildRebuildUserMessage(vouchers: VoucherSummary[]): string {
-  return `Vouchers desta viagem:
+export function buildRebuildUserMessage(vouchers: VoucherSummary[], summary: string | null = null): string {
+  return `${formatSummary(summary)}
+
+Vouchers desta viagem:
 ${formatVoucherList(vouchers)}
 
 Monte o roteiro dia a dia completo desta viagem.`;
@@ -64,8 +71,15 @@ export function buildIncrementalInstructions(): string {
 ${COMMON_RULES}`;
 }
 
-export function buildIncrementalUserMessage(currentState: TravelScheduleState, vouchers: VoucherSummary[], newVoucherId: string): string {
-  return `Roteiro atual da viagem:
+export function buildIncrementalUserMessage(
+  currentState: TravelScheduleState,
+  vouchers: VoucherSummary[],
+  newVoucherId: string,
+  summary: string | null = null,
+): string {
+  return `${formatSummary(summary)}
+
+Roteiro atual da viagem:
 travel_start_at: ${currentState.travelStartAt ?? '(ainda não definido)'}
 travel_end_at: ${currentState.travelEndAt ?? '(ainda não definido)'}
 Dias com evento (JSON, pode estar vazio se esta é a primeira extração da viagem):
@@ -112,13 +126,17 @@ Monte um array com exatamente um objeto por dia, em ordem cronológica, do prime
 ]
 \`\`\`
 
+Se houver um "Resumo geral da viagem" (mensagem do usuário), use-o só como contexto pra entender o perfil/estilo da viagem — ele NUNCA cria evento novo por conta própria; todo evento continua vindo exclusivamente de um voucher aberto.
+
 Sua resposta final deve ser um objeto JSON com exatamente dois campos:
 - "response": o array acima, serializado como texto (string) — não como objeto aninhado.
 - "analysed_doc_ids": lista com os ids de TODOS os vouchers que você abriu com a tool "openVoucher" para montar o roteiro.`;
 }
 
-export function buildGenerateUserMessage(vouchers: VoucherSummary[]): string {
-  return `Vouchers desta viagem:
+export function buildGenerateUserMessage(vouchers: VoucherSummary[], summary: string | null = null): string {
+  return `${formatSummary(summary)}
+
+Vouchers desta viagem:
 ${formatVoucherList(vouchers)}
 
 Monte o roteiro dia a dia completo desta viagem, do primeiro ao último dia do itinerário.`;

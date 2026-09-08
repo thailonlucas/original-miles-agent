@@ -1,5 +1,6 @@
 import {
   getTravelSchedule,
+  getTravelSummary,
   getVoucherSummaries,
   saveTravelSchedule,
   withTravelScheduleLock,
@@ -26,11 +27,14 @@ export function isRelevant(voucher: VoucherSummary): boolean {
 // `updateDailyScheduleForVoucher` abaixo, não esta função.
 export async function rebuildDailySchedule(tenantId: string, travelId: string, userId: string): Promise<void> {
   await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
-    const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
+    const [vouchers, summary] = await Promise.all([
+      getVoucherSummaries(tenantId, travelId, client).then((all) => all.filter(isRelevant)),
+      getTravelSummary(tenantId, travelId, client),
+    ]);
 
     const update =
       vouchers.length > 0
-        ? await buildDailyScheduleFromScratch(vouchers, tenantId)
+        ? await buildDailyScheduleFromScratch(vouchers, tenantId, summary)
         : { schedule: [], travel_start_at: null, travel_end_at: null };
 
     await saveTravelSchedule(
@@ -56,11 +60,12 @@ export async function updateDailyScheduleForVoucher(
   if (!isRelevant(newVoucher)) return;
 
   await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
-    // Sequencial, não `Promise.all` — as duas queries rodam no mesmo `client` (uma conexão só),
-    // então rodar "em paralelo" só enfileiraria uma atrás da outra mesmo assim.
+    // Sequencial, não `Promise.all` — as queries rodam no mesmo `client` (uma conexão só), então
+    // rodar "em paralelo" só enfileiraria uma atrás da outra mesmo assim.
     const currentState = await getTravelSchedule(tenantId, travelId, client);
     const vouchers = await getVoucherSummaries(tenantId, travelId, client);
-    const update = await applyVoucherToDailySchedule(currentState, vouchers.filter(isRelevant), newVoucher.id, tenantId);
+    const summary = await getTravelSummary(tenantId, travelId, client);
+    const update = await applyVoucherToDailySchedule(currentState, vouchers.filter(isRelevant), newVoucher.id, tenantId, summary);
 
     await saveTravelSchedule(
       tenantId,
