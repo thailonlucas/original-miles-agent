@@ -13,8 +13,8 @@ export interface DailyScheduleGeneration {
 // um dia por item entre o primeiro e o último da viagem, dentro de um envelope { response,
 // analysed_doc_ids }). `travel_start_at`/`travel_end_at` são derivados aqui do primeiro/último item
 // do array retornado, já que esse fluxo não pede essas datas separadamente ao model.
-export async function generateDailySchedule(tenantId: string, travelId: string): Promise<DailyScheduleGeneration> {
-  return withTravelScheduleLock(travelId, async (client) => {
+export async function generateDailySchedule(tenantId: string, travelId: string, userId: string): Promise<DailyScheduleGeneration> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
     const { response, analysed_doc_ids: analysedDocIds } = await generateDailyScheduleReport(vouchers, tenantId);
 

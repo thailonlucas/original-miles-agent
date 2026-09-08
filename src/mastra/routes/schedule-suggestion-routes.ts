@@ -53,10 +53,13 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
       return c.json({ error: 'bad_request', message: '"day" é obrigatório e deve estar no formato YYYY-MM-DD.' }, 400);
     }
 
-    // `travel_id` sozinho não escopa por tenant — confirma que a viagem pertence ao tenant do
-    // usuário autenticado antes de gerar qualquer sugestão (mesmo cuidado de `daily-schedule-routes.ts`).
+    // `travel_id` sozinho não escopa por tenant — confirma que, SE a viagem já existir em
+    // `travel`, ela pertence ao tenant do usuário autenticado (mesmo cuidado de
+    // `daily-schedule-routes.ts`). `travelTenantId` null (viagem ainda sem linha em `travel`,
+    // comum antes do primeiro daily-schedule gerado) segue em frente — sem vouchers/roteiro pra
+    // essa viagem ainda, o agente só devolve sugestões genéricas sem contexto.
     const travelTenantId = await getTenantIdByTravelId(travelId);
-    if (!travelTenantId || travelTenantId !== tenantId) {
+    if (travelTenantId && travelTenantId !== tenantId) {
       return c.json({ error: 'not_found', message: `Viagem ${travelId} não encontrada.` }, 404);
     }
 

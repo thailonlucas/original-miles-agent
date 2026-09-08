@@ -7,15 +7,17 @@ import { logConversationError } from '../helpers/logger';
 // Mesmo contrato de autenticação de `voucher-routes.ts`: o frontend manda o access_token do
 // Supabase Auth do usuário (`Authorization: Bearer <access_token>`), não a chave estática
 // (`ORIGINAL_MILES_API_KEY`) do resto do server — por isso `requiresAuth: false` + verificação
-// própria dentro da rota.
-async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<string> {
+// própria dentro da rota. Devolve também `userId` (o `auth.uid()` real do usuário logado) —
+// necessário pra `ensureTravelExists` (ver `travel-db.ts`), já que `auth.uid()` não resolve
+// sozinho na conexão direta via `pg` usada por trás dessas rotas.
+async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<{ tenantId: string; userId: string }> {
   const token = extractBearerToken(authorizationHeader);
   const user = await verifySupabaseAccessToken(token);
   const tenantId = await getTenantIdByEmail(user.email);
   if (!tenantId) {
     throw new UnauthorizedError(`Nenhum tenant encontrado para o e-mail "${user.email}" (tabela team).`);
   }
-  return tenantId;
+  return { tenantId, userId: user.id };
 }
 
 export const dailyScheduleGenerateRoute = registerApiRoute('/travel_agent/daily-schedule', {
@@ -32,8 +34,9 @@ export const dailyScheduleGenerateRoute = registerApiRoute('/travel_agent/daily-
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -52,16 +55,20 @@ export const dailyScheduleGenerateRoute = registerApiRoute('/travel_agent/daily-
       return c.json({ error: 'bad_request', message: '"session_id" é obrigatório.' }, 400);
     }
 
-    // `travel_id` sozinho não escopa por tenant — confirma que a viagem pertence ao tenant do
-    // usuário autenticado antes de gerar/gravar nada (senão um `travel_id` de outro tenant
-    // passaria pelas queries scoped e só produziria um roteiro vazio, silenciosamente).
+    // `travel_id` sozinho não escopa por tenant — confirma que, SE a viagem já existir em
+    // `travel`, ela pertence ao tenant do usuário autenticado (senão um `travel_id` de outro
+    // tenant passaria pelas queries scoped e só produziria um roteiro vazio, silenciosamente).
+    // Só bloqueia em caso de mismatch de verdade — `travelTenantId` null (viagem ainda não tem
+    // linha em `travel`, comum: vouchers podem ser extraídos antes disso, ver `insertVoucher`)
+    // segue em frente, e `generateDailySchedule` cria a linha (`ensureTravelExists`, dentro do
+    // lock) antes de gravar.
     const travelTenantId = await getTenantIdByTravelId(travelId);
-    if (!travelTenantId || travelTenantId !== tenantId) {
+    if (travelTenantId && travelTenantId !== tenantId) {
       return c.json({ error: 'not_found', message: `Viagem ${travelId} não encontrada.` }, 404);
     }
 
     try {
-      const { response, analysedDocIds } = await generateDailySchedule(tenantId, travelId);
+      const { response, analysedDocIds } = await generateDailySchedule(tenantId, travelId, userId);
       return c.json({ response, analysed_doc_ids: analysedDocIds }, 200);
     } catch (error) {
       logConversationError(travelId, `falha ao gerar daily_schedule (session_id ${sessionId})`, error);

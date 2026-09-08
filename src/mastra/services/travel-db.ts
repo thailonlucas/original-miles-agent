@@ -206,6 +206,32 @@ export async function getTravelSchedule(tenantId: string, travelId: string, clie
   };
 }
 
+// Garante que existe uma linha em `travel` pra este id/tenant antes de ler/gravar o roteiro.
+// Necessário porque este repo NUNCA cria `travel` (só lê/atualiza — quem cria é outro sistema, ver
+// comentário em `insertVoucher`), mas na prática já existe `travel_id` usado em `voucher`
+// (extração de voucher não depende de `travel` existir) sem uma linha correspondente em `travel`
+// ainda — sem isso, o `update` de `saveTravelSchedule` roda contra 0 linhas e falha em silêncio
+// (nenhum erro, nenhuma gravação), e as rotas que resolvem tenant via `getTenantIdByTravelId`
+// devolviam 404 mesmo a viagem "existindo" (só ainda não em `travel`). `on conflict do nothing`
+// pra nunca sobrescrever uma linha já existente (inclusive de outro tenant — nesse caso a
+// linha simplesmente não muda, e as queries scoped por tenant_id que rodam depois continuam
+// corretamente não encontrando nada pra esse tenant).
+//
+// `created_by` é `NOT NULL` com default `auth.uid()` — que só resolve dentro de um request
+// autenticado via Supabase Auth/PostgREST, nunca nesta conexão direta via `pg` (confirmado:
+// `select auth.uid()` por aqui devolve `null`). Por isso `userId` (o `id` do usuário logado, do
+// mesmo `AuthenticatedUser` de `supabase-auth.ts`) precisa ser passado explicitamente — sem isso
+// o insert falha com constraint violation assim que a linha realmente não existir ainda.
+export async function ensureTravelExists(tenantId: string, travelId: string, userId: string, client: Queryable = getPool()): Promise<void> {
+  // PK real de `travel` é composta (`id`, `tenant_id`) — `on conflict (id)` sozinho não casa com
+  // nenhuma constraint e falha com "no unique or exclusion constraint" mesmo numa linha nova.
+  await client.query(`insert into travel (id, tenant_id, created_by) values ($1, $2, $3) on conflict (id, tenant_id) do nothing`, [
+    travelId,
+    tenantId,
+    userId,
+  ]);
+}
+
 export async function saveTravelSchedule(tenantId: string, travelId: string, state: TravelScheduleState, client: Queryable = getPool()): Promise<void> {
   // Mesmo double-encoding de `ai_extracted_data` (ver comentário em `insertVoucher`) — os
   // registros já gravados pelo fluxo antigo em n8n guardam `daily_schedule` como jsonb *string*
@@ -281,11 +307,19 @@ type Queryable = Pick<pg.Pool | pg.PoolClient, 'query'>;
 // atual, mas se algum dia o pool apertar (`SUPABASE_DB_URL` é a Session Pooler do Supabase, ver
 // `mastra-instance.ts`), vale revisitar: soltar o lock antes da chamada de IA e reconferir/mesclar
 // no final é mais complexo, mas evita segurar conexão parada por vários segundos.
-export async function withTravelScheduleLock<T>(travelId: string, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+export async function withTravelScheduleLock<T>(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [DAILY_SCHEDULE_LOCK_NAMESPACE, travelId]);
+    // Ver `ensureTravelExists` — garante a linha antes de qualquer leitura/gravação de
+    // `daily_schedule`/`approved_suggestions` dentro de `fn`.
+    await ensureTravelExists(tenantId, travelId, userId, client);
     const result = await fn(client);
     await client.query('COMMIT');
     return result;

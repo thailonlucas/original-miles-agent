@@ -24,8 +24,8 @@ export function isRelevant(voucher: VoucherSummary): boolean {
 // específico de um roteiro montado incrementalmente não é confiável (não dá pra saber com
 // segurança quais pedaços do roteiro atual vieram só daquele voucher). Extração de voucher novo usa
 // `updateDailyScheduleForVoucher` abaixo, não esta função.
-export async function rebuildDailySchedule(tenantId: string, travelId: string): Promise<void> {
-  await withTravelScheduleLock(travelId, async (client) => {
+export async function rebuildDailySchedule(tenantId: string, travelId: string, userId: string): Promise<void> {
+  await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
 
     const update =
@@ -47,10 +47,15 @@ export async function rebuildDailySchedule(tenantId: string, travelId: string): 
 // roteiro, apontando qual é o voucher novo. O agente abre (tool `openVoucher`) só o que precisar.
 // Ver AGENTS.md desta pasta para o motivo (velocidade/custo) e o tradeoff (risco de deriva entre
 // chamadas incrementais sucessivas, mitigado por sempre reenviar o roteiro completo atual).
-export async function updateDailyScheduleForVoucher(tenantId: string, travelId: string, newVoucher: VoucherSummary): Promise<void> {
+export async function updateDailyScheduleForVoucher(
+  tenantId: string,
+  travelId: string,
+  newVoucher: VoucherSummary,
+  userId: string,
+): Promise<void> {
   if (!isRelevant(newVoucher)) return;
 
-  await withTravelScheduleLock(travelId, async (client) => {
+  await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     // Sequencial, não `Promise.all` — as duas queries rodam no mesmo `client` (uma conexão só),
     // então rodar "em paralelo" só enfileiraria uma atrás da outra mesmo assim.
     const currentState = await getTravelSchedule(tenantId, travelId, client);

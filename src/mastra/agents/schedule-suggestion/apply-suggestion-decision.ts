@@ -36,8 +36,13 @@ function emptyEvents(): DailyScheduleDay['events'] {
 // só disparado após excluir um voucher ou pelo endpoint `POST /travel_agent/daily-schedule`)
 // reconstrói o roteiro do zero A PARTIR SÓ DOS VOUCHERS — eventos de sugestão aprovada (que não
 // vêm de voucher nenhum) não sobrevivem a um rebuild. Fora do escopo deste endpoint corrigir.
-export async function applySuggestionDecision(tenantId: string, travelId: string, input: SuggestionDecisionInput): Promise<void> {
-  await withTravelScheduleLock(travelId, async (client) => {
+export async function applySuggestionDecision(
+  tenantId: string,
+  travelId: string,
+  input: SuggestionDecisionInput,
+  userId: string,
+): Promise<void> {
+  await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const decision: ScheduleSuggestionDecision = {
       date: input.day,
       period: input.period,

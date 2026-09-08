@@ -11,14 +11,16 @@ import { logConversationError } from '../helpers/logger';
 // Criar voucher -> update incremental (não reprocessa os outros vouchers da viagem). Excluir
 // voucher -> rebuild completo (remover a contribuição de só um voucher de um roteiro montado
 // incrementalmente não é confiável — ver comentário em `rebuildDailySchedule`).
-function triggerDailyScheduleUpdate(tenantId: string, travelId: string, voucher: VoucherSummary): void {
-  void updateDailyScheduleForVoucher(tenantId, travelId, voucher).catch((error) =>
+function triggerDailyScheduleUpdate(tenantId: string, travelId: string, voucher: VoucherSummary, userId: string): void {
+  void updateDailyScheduleForVoucher(tenantId, travelId, voucher, userId).catch((error) =>
     logConversationError(travelId, 'falha ao atualizar daily_schedule', error),
   );
 }
 
-function triggerDailyScheduleRebuild(tenantId: string, travelId: string): void {
-  void rebuildDailySchedule(tenantId, travelId).catch((error) => logConversationError(travelId, 'falha ao reconstruir daily_schedule', error));
+function triggerDailyScheduleRebuild(tenantId: string, travelId: string, userId: string): void {
+  void rebuildDailySchedule(tenantId, travelId, userId).catch((error) =>
+    logConversationError(travelId, 'falha ao reconstruir daily_schedule', error),
+  );
 }
 
 const FALLBACK_VOUCHER_TYPE_SLUG = 'other';
@@ -36,14 +38,14 @@ function isVoucherIssuer(value: unknown): value is VoucherIssuer {
 // <access_token>` do Supabase Auth — mesmo contrato das outras rotas de travel_agent (ver
 // `original-miles-cartinhas/src/routes/devs.tsx`). Lança `UnauthorizedError` (401) se o token
 // faltar/for inválido, ou se o e-mail do usuário não estiver em nenhum `team` (sem tenant).
-async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<string> {
+async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<{ tenantId: string; userId: string }> {
   const token = extractBearerToken(authorizationHeader);
   const user = await verifySupabaseAccessToken(token);
   const tenantId = await getTenantIdByEmail(user.email);
   if (!tenantId) {
     throw new UnauthorizedError(`Nenhum tenant encontrado para o e-mail "${user.email}" (tabela team).`);
   }
-  return tenantId;
+  return { tenantId, userId: user.id };
 }
 
 export const voucherExtractRoute = registerApiRoute('/travel_agent/extract/vouchers', {
@@ -63,8 +65,9 @@ export const voucherExtractRoute = registerApiRoute('/travel_agent/extract/vouch
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -141,12 +144,17 @@ export const voucherExtractRoute = registerApiRoute('/travel_agent/extract/vouch
       fileUrl: null,
     });
 
-    triggerDailyScheduleUpdate(tenantId, travelId, {
-      id: voucher.id,
-      title: voucher.title,
-      voucherTypeSlug: voucher.voucher_type_slug,
-      content: voucher.content,
-    });
+    triggerDailyScheduleUpdate(
+      tenantId,
+      travelId,
+      {
+        id: voucher.id,
+        title: voucher.title,
+        voucherTypeSlug: voucher.voucher_type_slug,
+        content: voucher.content,
+      },
+      userId,
+    );
     return c.json(voucher, 201);
   },
 });
@@ -161,8 +169,9 @@ export const voucherDeleteRoute = registerApiRoute('/travel_agent/extract/vouche
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -186,7 +195,7 @@ export const voucherDeleteRoute = registerApiRoute('/travel_agent/extract/vouche
       return c.json({ error: 'not_found', message: `Voucher ${voucherId} não encontrado para a viagem ${travelId}.` }, 404);
     }
 
-    triggerDailyScheduleRebuild(tenantId, travelId);
+    triggerDailyScheduleRebuild(tenantId, travelId, userId);
     return c.json({ deleted: true }, 200);
   },
 });
