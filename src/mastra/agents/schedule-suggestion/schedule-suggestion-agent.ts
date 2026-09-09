@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { RequestContext } from '@mastra/core/request-context';
-import type { ScheduleSuggestionDecision, VoucherSummary } from '../../services/travel-db';
+import type { StoredSuggestion, VoucherSummary } from '../../services/travel-db';
 import type { DailyScheduleDay } from '../daily-schedule/schema';
 import { openVoucherTool } from '../daily-schedule/tools/open-voucher-tool';
 import { buildSuggestionInstructions, buildSuggestionUserMessage } from './prompts/system-prompt';
@@ -30,7 +30,7 @@ export async function suggestActivitiesForDay(
   existingDay: DailyScheduleDay | null,
   fullSchedule: DailyScheduleDay[],
   vouchers: VoucherSummary[],
-  decisionHistory: ScheduleSuggestionDecision[],
+  decisionHistory: StoredSuggestion[],
   tenantId: string,
   prompt: string | null = null,
   quantity = 3,

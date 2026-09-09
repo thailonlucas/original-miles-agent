@@ -21,15 +21,15 @@ export const dailyScheduleEventSchema = z.object({
   // Legado: `POST /travel_agent/schedule-suggestion/decision` chegou a inserir o evento aprovado
   // direto aqui com `suggested: true` (ver `apply-suggestion-decision.ts`) — isso foi removido
   // porque misturava "o cliente gostou da sugestão" com "isso é um evento confirmado do roteiro"
-  // sem nenhum voucher por trás. Uma sugestão aprovada agora só fica em `travel.approved_suggestions`
-  // (ver `services/travel-db.ts` -> `getApprovedSuggestions`), nunca em `daily_schedule`. O campo
-  // continua aqui só pra não quebrar `dailyScheduleSchema.parse` de linhas antigas que já têm
-  // `suggested: true` gravado — nunca defina como true por conta própria daqui pra frente.
+  // sem nenhum voucher por trás. Uma sugestão aprovada agora só fica em `travel.suggestions` (ver
+  // `services/travel-db.ts` -> `getSuggestions`), nunca em `daily_schedule`. O campo continua aqui
+  // só pra não quebrar `dailyScheduleSchema.parse` de linhas antigas que já têm `suggested: true`
+  // gravado — nunca defina como true por conta própria daqui pra frente.
   suggested: z
     .boolean()
     .optional()
     .describe(
-      'Legado — não defina como true. Eventos do roteiro vêm só de vouchers; uma sugestão aprovada não vira evento aqui (ver `travel.approved_suggestions`).',
+      'Legado — não defina como true. Eventos do roteiro vêm só de vouchers; uma sugestão aprovada não vira evento aqui (ver `travel.suggestions`).',
     ),
 });
 

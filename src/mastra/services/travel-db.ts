@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { env } from '../config/env';
 import { requireEnv } from '../config/require-env';
+import { dailyScheduleSchema, type DailyScheduleDay, type DailyScheduleEvent } from '../agents/daily-schedule/schema';
 
 // Acesso direto ao Postgres do Supabase (mesma connection string usada pelo storage do Mastra,
 // ver `mastra-instance.ts`), em vez do client REST (`services/supabase.ts`, `SUPABASE_SERVICE_ROLE_KEY`).
@@ -245,6 +246,51 @@ export async function saveTravelSchedule(tenantId: string, travelId: string, sta
   ]);
 }
 
+// Edita título/conteúdo de UM evento já confirmado do roteiro (originado de voucher) — mesma ideia
+// de editar um voucher (`updateVoucher` no frontend), aplicada a um evento específico dentro de
+// `daily_schedule`. Localiza o evento por (date, period, index) — frágil se o roteiro for
+// reconstruído entre o usuário abrir a tela e salvar (o índice pode não bater mais), mas aceitável
+// pra uma edição rápida logo após ver a lista, mesmo risco que outras escritas otimistas do app.
+// Usa o mesmo lock de `daily_schedule` das outras escritas (`rebuild-daily-schedule.ts` etc.) pra
+// não pisar num rebuild/update incremental disparado ao mesmo tempo por um voucher novo.
+export async function updateDailyScheduleEvent(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  date: string,
+  period: 'morning' | 'afternoon' | 'night',
+  index: number,
+  patch: { title?: string; content?: string },
+): Promise<DailyScheduleEvent | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const state = await getTravelSchedule(tenantId, travelId, client);
+    const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+    if (!parsed.success) return null;
+
+    const days = parsed.data;
+    const dayIndex = days.findIndex((d) => d.date === date);
+    if (dayIndex < 0) return null;
+
+    const day = days[dayIndex];
+    const events = day.events[period];
+    const current = events[index];
+    if (!current) return null;
+
+    const updatedEvent: DailyScheduleEvent = {
+      ...current,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.content !== undefined ? { content: patch.content } : {}),
+    };
+    const newEvents = [...events];
+    newEvents[index] = updatedEvent;
+    const newDays: DailyScheduleDay[] = [...days];
+    newDays[dayIndex] = { ...day, events: { ...day.events, [period]: newEvents } };
+
+    await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt: state.travelStartAt, travelEndAt: state.travelEndAt }, client);
+    return updatedEvent;
+  });
+}
+
 // Resumo livre da viagem (perfil do cliente, tipo de viagem, preferências etc.), cadastrado uma vez
 // pelo usuário (ver `routes/travel-summary-routes.ts`) e reaproveitado como contexto pelos agentes
 // `daily-schedule`/`schedule-suggestion` — ao contrário de `daily_schedule`/`approved_suggestions`,
@@ -266,46 +312,142 @@ export async function saveTravelSummary(tenantId: string, travelId: string, summ
   await getPool().query(`update travel set summary = $1 where tenant_id = $2 and id = $3`, [summary, tenantId, travelId]);
 }
 
-export interface ScheduleSuggestionDecision {
+export type SuggestionStatus = 'pending' | 'approved' | 'rejected';
+
+// Uma sugestão do agente `schedule-suggestion`, do momento em que é gerada até ser decidida (ou
+// não). Guardada com um `id` estável desde a geração — necessário pra decidir, mover (drag and
+// drop entre dias) ou apagar uma sugestão específica depois, sem depender de reenviar o objeto
+// inteiro de volta (como o fluxo antigo fazia).
+export interface StoredSuggestion {
+  id: string;
   date: string; // YYYY-MM-DD
   period: 'morning' | 'afternoon' | 'night';
   event: { title: string; content: string; type: string; observation: string | null };
   // Motivo original dado pelo agente `schedule-suggestion` pra essa sugestão (ver
-  // `agents/schedule-suggestion/schema.ts` -> `scheduleSuggestionEventSchema.reason`) — guardado
-  // aqui mesmo pra rejeição, pra a "inteligência" da viagem saber TAMBÉM o que foi oferecido e
-  // recusado, não só o que foi aprovado.
+  // `agents/schedule-suggestion/schema.ts` -> `scheduleSuggestionEventSchema.reason`).
   reason: string | null;
-  status: 'approved' | 'rejected';
-  decidedAt: string; // ISO 8601
+  status: SuggestionStatus;
+  // Motivo dado pela PESSOA (não pelo agente) ao aprovar/rejeitar — ver
+  // `routes/schedule-suggestion-decision-routes.ts`. Sinal mais forte que `reason`/`status`
+  // sozinhos pras próximas sugestões (ver regra 4.1 do prompt de
+  // `agents/schedule-suggestion/prompts/system-prompt.ts`): explica o QUE agradou ou desagradou
+  // (ex: "muito caro", "adoramos vinícolas"), não só que aprovou/rejeitou. Sempre `null` enquanto
+  // `status` for "pending".
+  feedback: string | null;
+  createdAt: string; // ISO 8601 — quando o agente gerou esta sugestão.
+  decidedAt: string | null; // ISO 8601 — quando aprovada/rejeitada; `null` enquanto pendente.
 }
 
-// Histórico de decisões (aprovar/rejeitar) sobre sugestões do agente `schedule-suggestion` — a
-// "inteligência" da viagem: usado por `agents/schedule-suggestion/suggest-day-activities.ts` pra
-// alimentar as PRÓXIMAS chamadas de sugestão com o que o cliente já aprovou/rejeitou antes (ver
-// `prompts/system-prompt.ts` desse agente). Ao contrário de `ai_extracted_data`/`daily_schedule`,
-// esta coluna é nova (sem consumidor legado em n8n) — grava jsonb normal, sem o double-encoding
-// dessas duas (ver comentário em `insertVoucher`).
-export async function getApprovedSuggestions(tenantId: string, travelId: string, client: Queryable = getPool()): Promise<ScheduleSuggestionDecision[]> {
-  const { rows } = await client.query<{ approved_suggestions: ScheduleSuggestionDecision[] | null }>(
-    `select approved_suggestions from travel where tenant_id = $1 and id = $2 limit 1`,
+// Todas as sugestões já geradas pro agente pra esta viagem (pendentes, aprovadas e rejeitadas) —
+// única fonte usada tanto pelo prompt do agente (filtra as decididas, ver
+// `suggest-day-activities.ts`) quanto pelo frontend (mostra tudo no histórico, e as pendentes
+// aparecem como card no dia a dia até serem decididas).
+export async function getSuggestions(tenantId: string, travelId: string, client: Queryable = getPool()): Promise<StoredSuggestion[]> {
+  const { rows } = await client.query<{ suggestions: StoredSuggestion[] | null }>(
+    `select suggestions from travel where tenant_id = $1 and id = $2 limit 1`,
     [tenantId, travelId],
   );
-  return rows[0]?.approved_suggestions ?? [];
+  return rows[0]?.suggestions ?? [];
 }
 
-// Concatena a decisão no array jsonb direto no Postgres (`||` de jsonb) em vez de ler+reescrever
-// em código — evita perder uma decisão concorrente sem precisar do advisory lock de
-// `withTravelScheduleLock` só pra esta coluna (que é independente de `daily_schedule`).
-export async function appendApprovedSuggestion(
+// Grava as sugestões recém-geradas pelo agente como "pending" — chamado logo após
+// `suggestActivitiesForDay` responder, antes de devolver a resposta HTTP (ver
+// `suggest-day-activities.ts`). Concatena via `||` de jsonb (sem lock: é só um append, não
+// depende de ler o estado atual pra decidir o que escrever).
+export async function appendPendingSuggestions(
   tenantId: string,
   travelId: string,
-  decision: ScheduleSuggestionDecision,
-  client: Queryable = getPool(),
+  userId: string,
+  suggestions: StoredSuggestion[],
 ): Promise<void> {
-  await client.query(
-    `update travel set approved_suggestions = coalesce(approved_suggestions, '[]'::jsonb) || $1::jsonb where tenant_id = $2 and id = $3`,
-    [JSON.stringify([decision]), tenantId, travelId],
+  if (suggestions.length === 0) return;
+  // Garante a linha em `travel` — mesmo motivo de `ensureTravelExists` nas outras escritas
+  // (primeira sugestão pedida pra uma viagem pode acontecer antes de qualquer voucher/roteiro).
+  await ensureTravelExists(tenantId, travelId, userId);
+  await getPool().query(`update travel set suggestions = coalesce(suggestions, '[]'::jsonb) || $1::jsonb where tenant_id = $2 and id = $3`, [
+    JSON.stringify(suggestions),
+    tenantId,
+    travelId,
+  ]);
+}
+
+// Aprova ou rejeita UMA sugestão pendente pelo `id` — só decide quem ainda está "pending" (a
+// condição no WHERE/CASE evita decidir a mesma sugestão duas vezes por engano). Devolve `true` se
+// encontrou e decidiu, `false` se o id não existia ou já tinha sido decidido.
+export async function decideSuggestion(
+  tenantId: string,
+  travelId: string,
+  suggestionId: string,
+  status: 'approved' | 'rejected',
+  feedback: string | null,
+): Promise<boolean> {
+  const decidedAt = new Date().toISOString();
+  const { rows } = await getPool().query<{ decided: boolean }>(
+    `update travel
+     set suggestions = coalesce((
+       select jsonb_agg(
+         case when elem->>'id' = $3 and elem->>'status' = 'pending'
+           then elem || jsonb_build_object('status', $4::text, 'feedback', to_jsonb($5::text), 'decidedAt', $6::text)
+           else elem
+         end
+       )
+       from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem
+     ), '[]'::jsonb)
+     where tenant_id = $1 and id = $2
+       and exists (
+         select 1 from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem
+         where elem->>'id' = $3 and elem->>'status' = 'pending'
+       )
+     returning true as decided`,
+    [tenantId, travelId, suggestionId, status, feedback, decidedAt],
   );
+  return rows.length > 0;
+}
+
+// Move uma sugestão (pendente ou já aprovada) pra outro dia/período — usado pelo drag and drop do
+// kanban de sugestões no frontend. Não restringe por `status`: mover uma sugestão já aprovada
+// continua fazendo sentido (o cliente decidiu fazer aquilo em outro dia).
+export async function moveSuggestion(
+  tenantId: string,
+  travelId: string,
+  suggestionId: string,
+  newDate: string,
+  newPeriod: 'morning' | 'afternoon' | 'night',
+): Promise<boolean> {
+  const { rows } = await getPool().query<{ moved: boolean }>(
+    `update travel
+     set suggestions = coalesce((
+       select jsonb_agg(
+         case when elem->>'id' = $3
+           then elem || jsonb_build_object('date', $4::text, 'period', $5::text)
+           else elem
+         end
+       )
+       from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem
+     ), '[]'::jsonb)
+     where tenant_id = $1 and id = $2
+       and exists (select 1 from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem where elem->>'id' = $3)
+     returning true as moved`,
+    [tenantId, travelId, suggestionId, newDate, newPeriod],
+  );
+  return rows.length > 0;
+}
+
+// Remove uma sugestão do histórico por completo (qualquer status) — usado pelo botão de apagar
+// uma sugestão já aprovada na tela de histórico. Diferente de rejeitar: some da "inteligência" da
+// viagem também, não fica registrada como rejeição.
+export async function deleteSuggestion(tenantId: string, travelId: string, suggestionId: string): Promise<boolean> {
+  const { rows } = await getPool().query<{ removed: boolean }>(
+    `update travel
+     set suggestions = coalesce((
+       select jsonb_agg(elem) from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem where elem->>'id' <> $3
+     ), '[]'::jsonb)
+     where tenant_id = $1 and id = $2
+       and exists (select 1 from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem where elem->>'id' = $3)
+     returning true as removed`,
+    [tenantId, travelId, suggestionId],
+  );
+  return rows.length > 0;
 }
 
 // Namespace arbitrário pro advisory lock abaixo — só existe pra não colidir com outro uso futuro

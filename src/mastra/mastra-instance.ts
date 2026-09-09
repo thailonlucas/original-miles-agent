@@ -22,8 +22,14 @@ import { dailyScheduleAgent } from './agents/daily-schedule/daily-schedule-agent
 import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-suggestion-agent';
 import { voucherExtractRoute, voucherDeleteRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute } from './routes/daily-schedule-routes';
+import { dailyScheduleEventUpdateRoute } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
-import { scheduleSuggestionDecisionListRoute, scheduleSuggestionDecisionRoute } from './routes/schedule-suggestion-decision-routes';
+import {
+  scheduleSuggestionDecisionListRoute,
+  scheduleSuggestionDecisionRoute,
+  scheduleSuggestionDeleteRoute,
+  scheduleSuggestionMoveRoute,
+} from './routes/schedule-suggestion-decision-routes';
 import { travelSummaryGetRoute, travelSummaryUpdateRoute } from './routes/travel-summary-routes';
 import {
   companyReferenceListRoute,
@@ -64,9 +70,12 @@ export const mastra = new Mastra({
       voucherExtractRoute,
       voucherDeleteRoute,
       dailyScheduleGenerateRoute,
+      dailyScheduleEventUpdateRoute,
       scheduleSuggestionRoute,
       scheduleSuggestionDecisionRoute,
       scheduleSuggestionDecisionListRoute,
+      scheduleSuggestionMoveRoute,
+      scheduleSuggestionDeleteRoute,
       travelSummaryGetRoute,
       travelSummaryUpdateRoute,
       companyReferenceListRoute,

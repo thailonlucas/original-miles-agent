@@ -1,4 +1,4 @@
-import type { ScheduleSuggestionDecision, VoucherSummary } from '../../../services/travel-db';
+import type { StoredSuggestion, VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 
 function formatVoucherList(vouchers: VoucherSummary[]): string {
@@ -28,11 +28,19 @@ function formatOtherDaysSummary(fullSchedule: DailyScheduleDay[], day: string): 
 }
 
 // Compacto de propósito (sem "content") — só o suficiente pro model reconhecer padrão de gosto
-// (tipo de lugar, estilo) sem re-litigar o conteúdo de cada sugestão antiga.
-function formatDecisionHistory(decisionHistory: ScheduleSuggestionDecision[]): string {
+// (tipo de lugar, estilo) sem re-litigar o conteúdo de cada sugestão antiga. `client_feedback` (se
+// houver) é o motivo que a PESSOA deu ao decidir — sinal mais forte que "status" sozinho (ver regra 4.1).
+function formatDecisionHistory(decisionHistory: StoredSuggestion[]): string {
   if (decisionHistory.length === 0) return '(nenhuma decisão registrada ainda nesta viagem)';
   return JSON.stringify(
-    decisionHistory.map((d) => ({ date: d.date, period: d.period, title: d.event.title, type: d.event.type, status: d.status })),
+    decisionHistory.map((d) => ({
+      date: d.date,
+      period: d.period,
+      title: d.event.title,
+      type: d.event.type,
+      status: d.status,
+      client_feedback: d.feedback,
+    })),
     null,
     2,
   );
@@ -67,7 +75,7 @@ ${profileSection}
    - Se o período está livre: marque "has_existing_events": false e proponha cerca de ${quantity} ${quantity === 1 ? 'opção plausível e viável' : 'opções plausíveis e viáveis'} pra aquele período, no nível definido pelo "Perfil do cliente" acima (pedido específico do cliente, quando houver, ou o padrão alto da agência) — passeios e restaurantes SIMILARES em estilo/categoria ao que já foi reservado no resto do roteiro (ex: se o roteiro já tem jantares em restaurantes premiados, sugira restaurantes do mesmo nível; se já tem passeios privativos, prefira sugerir passeios privativos também), a menos que o pedido do cliente peça explicitamente outro nível.
 3. Antes de sugerir pra um dia/período livre, olhe o resumo dos outros dias do roteiro (mensagem do usuário) pra ver se este é um dia de deslocamento (ex: check-out de uma acomodação numa cidade e check-in em outra, ou um trecho de voo/trem/transfer entre duas datas próximas). Se for, as sugestões pro período livre devem considerar que o cliente está EM TRÂNSITO — algo que faça sentido no caminho ou próximo à rota entre origem e destino daquele deslocamento, não só atividades como se ele estivesse parado numa cidade só.
 4. Se você identificou criança(s) viajando (passo 1), inclua também, entre as sugestões do dia, pelo menos uma opção apropriada pra elas (atividade kid-friendly, adequada à idade se souber) — além das sugestões para os adultos, não no lugar delas. Se identificou uma ocasião especial (lua de mel, aniversário etc.), priorize sugestões que combinem com a ocasião (ex: jantar romântico, experiência exclusiva para casal, comemoração especial).
-4.1. Use o histórico de decisões desta viagem (mensagem do usuário) como sinal de gosto do cliente: prefira sugerir algo do mesmo estilo/categoria ("type", tipo de lugar) do que ele já APROVOU antes nesta viagem, e evite propor de novo algo muito parecido com o que ele já REJEITOU (categoria, estilo, tipo de lugar) — a menos que o contexto deste dia específico realmente justifique repetir.
+4.1. Use o histórico de decisões desta viagem (mensagem do usuário) como sinal de gosto do cliente: prefira sugerir algo do mesmo estilo/categoria ("type", tipo de lugar) do que ele já APROVOU antes nesta viagem, e evite propor de novo algo muito parecido com o que ele já REJEITOU (categoria, estilo, tipo de lugar) — a menos que o contexto deste dia específico realmente justifique repetir. Quando uma decisão tiver "client_feedback" preenchido, esse texto pesa MAIS que só "status"/"type" — é o motivo que a própria pessoa deu (ex: "muito caro" numa rejeição, "adoramos vinícolas" numa aprovação): reflita esse motivo específico nas próximas sugestões (evite o que foi criticado, repita o padrão do que foi elogiado), não só a categoria genérica do evento.
 4.2. Se a mensagem do usuário trouxer um "Pedido específico do cliente para este dia", priorize sugestões (nos períodos livres) que atendam de verdade a esse pedido — ele define o nível/estilo da sugestão (ver "Perfil do cliente" acima), não o padrão "high ticket" da agência. Nunca ignore o pedido pra encaixar algo genérico só porque é mais fácil. Se o pedido não fizer sentido nenhum pro destino/contexto da viagem, avise disso em "reason" e sugira a alternativa mais próxima plausível em vez de inventar algo que não existe no destino.
 4.3. Se houver um "Resumo geral da viagem" (mensagem do usuário), use-o como pano de fundo pra TODAS as sugestões deste dia (não só quando não houver pedido pontual) — ele pode trazer sinais que os vouchers sozinhos não mostram (ex: "lua de mel", "viagem em família com crianças pequenas", "primeira viagem internacional do casal"). Ele nunca invalida o pedido pontual do passo 4.2 quando os dois existirem juntos — o pedido pontual manda no nível/estilo, o resumo geral só complementa com contexto.
 5. Toda sugestão precisa ser plausível e viável de verdade — coisas que realmente existem/fazem sentido no destino identificado (pode usar seu conhecimento geral sobre o destino pra isso), nunca extrapoladas de vouchers que não tratam de passeios/atividades (ex: não sugerir algo a partir de um voucher de seguro-viagem).
@@ -82,7 +90,7 @@ export function buildSuggestionUserMessage(
   existingDay: DailyScheduleDay | null,
   fullSchedule: DailyScheduleDay[],
   vouchers: VoucherSummary[],
-  decisionHistory: ScheduleSuggestionDecision[],
+  decisionHistory: StoredSuggestion[],
   prompt: string | null = null,
   quantity = 3,
   summary: string | null = null,

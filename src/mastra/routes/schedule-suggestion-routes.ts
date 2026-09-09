@@ -7,14 +7,14 @@ import { logConversationError } from '../helpers/logger';
 // Mesmo contrato de autenticação de `voucher-routes.ts`/`daily-schedule-routes.ts`: o frontend
 // manda o access_token do Supabase Auth do usuário (`Authorization: Bearer <access_token>`), não a
 // chave estática (`ORIGINAL_MILES_API_KEY`) do resto do server.
-async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<string> {
+async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<{ tenantId: string; userId: string }> {
   const token = extractBearerToken(authorizationHeader);
   const user = await verifySupabaseAccessToken(token);
   const tenantId = await getTenantIdByEmail(user.email);
   if (!tenantId) {
     throw new UnauthorizedError(`Nenhum tenant encontrado para o e-mail "${user.email}" (tabela team).`);
   }
-  return tenantId;
+  return { tenantId, userId: user.id };
 }
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -35,8 +35,9 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -79,7 +80,7 @@ export const scheduleSuggestionRoute = registerApiRoute('/travel_agent/schedule-
     }
 
     try {
-      const suggestion = await suggestDayActivities(tenantId, travelId, day, prompt, quantity);
+      const suggestion = await suggestDayActivities(tenantId, travelId, userId, day, prompt, quantity);
       return c.json(suggestion, 200);
     } catch (error) {
       logConversationError(travelId, `falha ao gerar sugestões de roteiro para o dia ${day}`, error);
