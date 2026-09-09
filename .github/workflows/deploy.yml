@@ -1,0 +1,12 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deploy
+        run: curl -fsS "http://187.127.61.126:3000/api/deploy/be194ccc6a8314ddadad05a6ed34e8cc0d1fdeb4e0c7601f"
