@@ -4,7 +4,7 @@ import type { StoredSuggestion, VoucherSummary } from '../../services/travel-db'
 import type { DailyScheduleDay } from '../daily-schedule/schema';
 import { openVoucherTool } from '../daily-schedule/tools/open-voucher-tool';
 import { buildSuggestionInstructions, buildSuggestionUserMessage } from './prompts/system-prompt';
-import { scheduleSuggestionResultSchema, type ScheduleSuggestionResult } from './schema';
+import { buildScheduleSuggestionResultSchema, scheduleSuggestionResultSchema, type ScheduleSuggestionResult } from './schema';
 
 // Reaproveita a tool `openVoucher` do daily-schedule (mesmo contrato: `tenant_id` via
 // requestContext, nunca passado pelo model) — este agente também precisa abrir vouchers pra
@@ -40,6 +40,10 @@ export async function suggestActivitiesForDay(
     buildSuggestionUserMessage(day, existingDay, fullSchedule, vouchers, decisionHistory, prompt, quantity, summary),
     {
       instructions: buildSuggestionInstructions(quantity, prompt, summary),
+      // Sobrescreve o `structuredOutput` fixo do `defaultOptions` (quantity=3) com um schema
+      // construído pra este `quantity` — ver comentário em `schema.ts` sobre por que a descrição
+      // do campo "suggestions" (não só a instrução em texto livre) precisa carregar o número real.
+      structuredOutput: { schema: buildScheduleSuggestionResultSchema(quantity) },
       requestContext: new RequestContext([['tenant_id', tenantId]]),
     },
   );

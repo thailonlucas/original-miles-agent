@@ -29,22 +29,41 @@ export const scheduleSuggestionEventSchema = z.object({
     ),
 });
 
-export const scheduleSuggestionPeriodSchema = z.object({
-  has_existing_events: z.boolean().describe('true se este período (manhã/tarde/noite) já tem pelo menos um evento confirmado no roteiro atual.'),
-  suggestions: z
-    .array(scheduleSuggestionEventSchema)
-    .describe(
-      'Sugestões para este período: complementares (poucas, só o que agregar de verdade) se já houver evento confirmado, ou um conjunto de ' +
-        'opções (normalmente 3) se o período estiver livre.',
-    ),
-});
+// A descrição de "suggestions" carrega a `quantity` de verdade pedida nesta chamada — o schema é
+// enviado ao model como JSON Schema (via `structuredOutput`) e pesa mais que só a instrução em
+// texto livre. Com uma descrição estática ("normalmente 3"), o model tendia a ignorar `quantity`
+// e sempre devolver ~3 sugestões por período livre, mesmo quando o cliente pedia mais/menos (ver
+// `quantity` em `routes/schedule-suggestion-routes.ts`). Por isso o schema é construído por
+// chamada em `suggestActivitiesForDay` (mesmo padrão de `structuredOutput` por chamada de
+// `daily-schedule-agent.ts`), em vez de fixo no `defaultOptions` do agente.
+function buildScheduleSuggestionPeriodSchema(quantity: number) {
+  return z.object({
+    has_existing_events: z.boolean().describe('true se este período (manhã/tarde/noite) já tem pelo menos um evento confirmado no roteiro atual.'),
+    suggestions: z
+      .array(scheduleSuggestionEventSchema)
+      .describe(
+        'Sugestões para este período: complementares (poucas, só o que agregar de verdade) se já houver evento confirmado, ou ' +
+          `exatamente ${quantity} ${quantity === 1 ? 'opção' : 'opções'} se o período estiver livre.`,
+      ),
+  });
+}
 
-export const scheduleSuggestionResultSchema = z.object({
-  date: z.string().describe('YYYY-MM-DD — dia consultado.'),
-  morning: scheduleSuggestionPeriodSchema.describe('Sugestões para o período entre 00:00 e 11:59.'),
-  afternoon: scheduleSuggestionPeriodSchema.describe('Sugestões para o período entre 12:00 e 17:59.'),
-  night: scheduleSuggestionPeriodSchema.describe('Sugestões para o período entre 18:00 e 23:59.'),
-});
+export function buildScheduleSuggestionResultSchema(quantity: number) {
+  const periodSchema = buildScheduleSuggestionPeriodSchema(quantity);
+  return z.object({
+    date: z.string().describe('YYYY-MM-DD — dia consultado.'),
+    morning: periodSchema.describe('Sugestões para o período entre 00:00 e 11:59.'),
+    afternoon: periodSchema.describe('Sugestões para o período entre 12:00 e 17:59.'),
+    night: periodSchema.describe('Sugestões para o período entre 18:00 e 23:59.'),
+  });
+}
+
+// Schemas "padrão" (quantity=3) — só pra inferência de tipo (`ScheduleSuggestionResult`/
+// `ScheduleSuggestionPeriod`) e pro `defaultOptions` do agente (ver `schedule-suggestion-agent.ts`);
+// toda chamada real via `suggestActivitiesForDay` sobrescreve com
+// `buildScheduleSuggestionResultSchema(quantity)`.
+export const scheduleSuggestionPeriodSchema = buildScheduleSuggestionPeriodSchema(3);
+export const scheduleSuggestionResultSchema = buildScheduleSuggestionResultSchema(3);
 
 // Período do dia de uma sugestão — mesmas três chaves de `scheduleSuggestionResultSchema`/
 // `dailyScheduleDaySchema.events`. Usado pelo endpoint de aprovação/rejeição (ver
