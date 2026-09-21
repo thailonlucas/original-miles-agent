@@ -1,13 +1,17 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { RequestContext } from '@mastra/core/request-context';
-import { getVoucherSummaries } from '../../services/travel-db';
+import { getVoucherSummaries, getTravelSummary } from '../../services/travel-db';
 import { buildOriInstructions } from './prompts/system-prompt';
 import { oriResultSchema, type OriResult } from './schema';
 import { searchVoucherTool } from './tools/search-voucher-tool';
 import { updateVoucherTool } from './tools/update-voucher-tool';
 import { createVoucherTool } from './tools/create-voucher-tool';
 import { deleteVoucherTool } from './tools/delete-voucher-tool';
+import { getDailyScheduleTool } from './tools/get-daily-schedule-tool';
+import { updateDailyScheduleEventTool } from './tools/update-daily-schedule-event-tool';
+import { getTravelContextTool } from './tools/get-travel-context-tool';
+import { updateTravelContextTool } from './tools/update-travel-context-tool';
 
 // Memória de conversa por sessão (thread) — sem ela, a confirmação pedida antes de criar um
 // voucher ("quer que eu adicione isso?", ver `tools/create-voucher-tool.ts`) não funcionaria: a
@@ -35,6 +39,10 @@ export const oriAgent = new Agent({
     atualizarDocumento: updateVoucherTool,
     criarDocumento: createVoucherTool,
     deletarDocumento: deleteVoucherTool,
+    buscarRoteiro: getDailyScheduleTool,
+    atualizarEventoRoteiro: updateDailyScheduleEventTool,
+    buscarContextoViagem: getTravelContextTool,
+    atualizarContextoViagem: updateTravelContextTool,
   },
   memory: oriMemory,
   defaultOptions: {
@@ -52,10 +60,10 @@ export const oriAgent = new Agent({
 // acidental do mesmo `session_id` em outra viagem nunca colidir com uma thread já existente de
 // outro dono (thread não pode trocar de "owner"/resource depois de criada).
 export async function askOri(tenantId: string, travelId: string, userId: string, sessionId: string, prompt: string): Promise<OriResult> {
-  const vouchers = await getVoucherSummaries(tenantId, travelId);
+  const [vouchers, tripContext] = await Promise.all([getVoucherSummaries(tenantId, travelId), getTravelSummary(tenantId, travelId)]);
 
   const { object } = await oriAgent.generate(prompt, {
-    instructions: buildOriInstructions(vouchers),
+    instructions: buildOriInstructions(vouchers, tripContext),
     memory: {
       thread: `${travelId}:${sessionId}`,
       resource: tenantId,

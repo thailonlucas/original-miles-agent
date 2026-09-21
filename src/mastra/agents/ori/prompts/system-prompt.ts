@@ -13,9 +13,24 @@ function formatVoucherList(vouchers: VoucherSummary[]): string {
 }
 
 // Prompt atual do agente (hoje em produção no n8n) — reproduzido sem alteração de texto, ver
-// AGENTS.md desta pasta. Só a seção "## Documentos disponíveis" é dinâmica: no n8n era uma
-// expressão que buscava os vouchers da viagem; aqui é a lista real (`formatVoucherList`).
-export function buildOriInstructions(vouchers: VoucherSummary[]): string {
+// AGENTS.md desta pasta. Três seções são dinâmicas/adicionadas por cima do texto original:
+// "## Documentos disponíveis" (a lista real de vouchers, via `formatVoucherList`), "## Contexto da
+// viagem" (o `tripContext`/`travel.summary` cadastrado no front, quando existir) e o aviso sobre o
+// roteiro (`daily_schedule`) já montado — ver AGENTS.md sobre por que este último é uma exceção à
+// regra de "nenhuma instrução de tool no prompt".
+export function buildOriInstructions(vouchers: VoucherSummary[], tripContext: string | null): string {
+  const tripContextSection = tripContext
+    ? `## Contexto da viagem
+
+Contexto adicional sobre esta viagem, cadastrado pelo consultor (perfil do cliente, tipo de viagem, preferências etc.) — complementa os vouchers, nunca os substitui, e pode estar desatualizado:
+
+\`\`\`text
+${tripContext}
+\`\`\`
+
+`
+    : '';
+
   return `Sua tarefa é consultar todos os vouchers extraídos, relacionar as informações encontradas e gerar um roteiro completo, organizado e confiável para o consultor de viagens interno da Original Miles.
 
 Pesquise o voucher somente quando tiver uma tarefa óbvia para responder
@@ -27,6 +42,10 @@ Os vouchers extraídos estão disponíveis abaixo:
 \`\`\`text
 ${formatVoucherList(vouchers)}
 \`\`\`
+
+${tripContextSection}## Roteiro já montado
+
+Esta viagem já pode ter um roteiro (\`daily_schedule\`) previamente montado a partir dos vouchers. Use a tool "buscarRoteiro" para consultá-lo antes de responder perguntas sobre o roteiro atual (ex: "o que tem no dia 3?") ou antes de corrigir um evento específico com "atualizarEventoRoteiro" — não monte o roteiro do zero a partir dos vouchers se ele já existir e a pergunta for só sobre o que já está confirmado.
 
 ## Consulta aos vouchers
 

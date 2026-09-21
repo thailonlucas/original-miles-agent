@@ -1,6 +1,6 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { generateDailySchedule } from '../agents/daily-schedule/generate-daily-schedule';
-import { getTenantIdByTravelId, getTenantIdByEmail } from '../services/travel-db';
+import { getTenantIdByTravelId, getTenantIdByEmail, getTravelSchedule } from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { logConversationError } from '../helpers/logger';
 
@@ -19,6 +19,45 @@ async function resolveTenantId(authorizationHeader: string | undefined | null): 
   }
   return { tenantId, userId: user.id };
 }
+
+// Migra o GET que hoje ainda está no n8n (`https://n8n.flowerslab.ai/webhook/travel_agent/daily-schedule`)
+// — só busca o roteiro já gravado em `travel.daily_schedule` (POST/geração já estava migrado antes
+// disso, ver `dailyScheduleGenerateRoute` abaixo). Devolve o array de dias direto (sem envelope),
+// mesmo contrato do webhook antigo: o frontend (`fetchDailySchedule`, `routes/index.tsx`) trata um
+// 404 como "viagem sem roteiro ainda" (mostra `[]`), não como erro.
+export const dailyScheduleGetRoute = registerApiRoute('/travel_agent/daily-schedule', {
+  method: 'GET',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Busca o roteiro dia a dia (daily_schedule) já gravado de uma viagem',
+    description: 'Query string: `travel_id`. Devolve o array de dias (esparso — só dias com evento) direto, sem envelope. 404 se a viagem não existir para o tenant autenticado.',
+    tags: ['Daily Schedule'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    try {
+      ({ tenantId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const travelId = c.req.query('travel_id');
+    if (!travelId) {
+      return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
+    }
+
+    const travelTenantId = await getTenantIdByTravelId(travelId);
+    if (!travelTenantId || travelTenantId !== tenantId) {
+      return c.json({ error: 'not_found', message: `Viagem ${travelId} não encontrada.` }, 404);
+    }
+
+    const { dailySchedule } = await getTravelSchedule(tenantId, travelId);
+    return c.json(dailySchedule, 200);
+  },
+});
 
 export const dailyScheduleGenerateRoute = registerApiRoute('/travel_agent/daily-schedule', {
   method: 'POST',

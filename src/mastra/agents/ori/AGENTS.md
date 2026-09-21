@@ -8,8 +8,9 @@ Leia este arquivo antes de alterar qualquer coisa nesta pasta.
 cliente final). Recebe uma pergunta/pedido em texto livre (`prompt`) sobre uma viagem específica
 (`travel_id`) e responde com base nos vouchers já extraídos dessa viagem — desde responder uma
 pergunta pontual ("qual o hotel do dia 3?") até montar o roteiro completo. Também pode
-buscar/criar/atualizar/excluir vouchers da viagem através de tools, sempre por iniciativa
-conversacional (nunca por comando estruturado).
+buscar/criar/atualizar/excluir vouchers da viagem, consultar e corrigir eventos do roteiro
+(`daily_schedule`) já montado, e ler/editar o "Contexto da Viagem" cadastrado no front, tudo
+através de tools, sempre por iniciativa conversacional (nunca por comando estruturado).
 
 Chamado via `POST /travel_agent/ori` (`routes/ori-routes.ts`).
 
@@ -20,16 +21,30 @@ em produção no n8n para este agente — a pedido explícito de quem definiu es
 quebrar um comportamento que já funciona. Não reescreva o texto por conta própria; qualquer ajuste
 de redação é uma decisão separada, futura.
 
-A única parte dinâmica é a seção "## Documentos disponíveis": no n8n era uma expressão
+A parte dinâmica do texto original é a seção "## Documentos disponíveis": no n8n era uma expressão
 (`$('Busca vouchers da viagem').all().filter(...).map(...)`) que buscava os vouchers da viagem;
 aqui é `formatVoucherList` (mesmo módulo), que reproduz o mesmo filtro (`title` E `content`
 precisam existir) e o mesmo formato de linha (`doc_id: ..., title: ..., content: ...`) a partir de
 `getVoucherSummaries` (`services/travel-db.ts`).
 
-**Nenhuma instrução sobre as 4 tools abaixo foi adicionada ao prompt** (mesma razão: não alterar o
-texto atual) — o comportamento esperado de cada tool (quando usar, pedir confirmação antes de
-criar/excluir) fica só na `description` de cada tool, que o model sempre vê independente das
-instructions.
+Duas seções foram acrescentadas por cima do texto original (decisão explícita, não fazem parte do
+prompt do n8n):
+
+- **"## Contexto da viagem"** — só aparece quando `travel.summary` (`getTravelSummary`) não é
+  `null`; injeta o mesmo texto do campo "Contexto da Viagem" do front (ver tool
+  `buscarContextoViagem` abaixo) direto nas instructions, pro model já partir sabendo o perfil do
+  cliente/preferências sem precisar chamar a tool. `askOri` busca `vouchers` e `tripContext` em
+  paralelo (`Promise.all`) antes de montar as instructions.
+- **"## Roteiro já montado"** — aviso fixo (não depende de dado nenhum) de que a viagem pode já ter
+  um `daily_schedule` montado e que o model deve consultar com "buscarRoteiro" antes de responder
+  sobre o roteiro atual ou de corrigir um evento. É a ÚNICA exceção à regra abaixo de "nenhuma
+  instrução de tool no prompt" — decisão explícita de quem pediu esta mudança, pra reduzir a chance
+  do model tentar remontar o roteiro do zero quando já existe um.
+
+**Fora essas duas seções, nenhuma instrução sobre as 8 tools foi adicionada ao prompt** (mesma
+razão original: não alterar o texto do n8n) — o comportamento esperado de cada tool (quando usar,
+pedir confirmação antes de criar/excluir) fica só na `description` de cada tool, que o model sempre
+vê independente das instructions.
 
 ## Saída — envelope fixo `{ response, analysed_doc_ids }`
 
@@ -41,7 +56,7 @@ como JSON dentro dela, quando o pedido for "monta o roteiro" (aí valem as regra
 resposta" do prompt). O schema do roteiro em si (o JSON que vai dentro de `response` nesse caso)
 não está tipado aqui — é o model seguindo o prompt em texto livre, igual já acontece hoje no n8n.
 
-## As 4 tools — todas escopadas por `requestContext`
+## As 8 tools — todas escopadas por `requestContext`
 
 `tenant_id`/`travel_id`/`user_id` vêm sempre do `requestContext` (nunca de argumento que o model
 preenche, mesmo contrato de `agents/daily-schedule/tools/open-voucher-tool.ts`) — evita um voucher
@@ -61,8 +76,33 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   de conversa real (ver abaixo), não só do prompt da chamada atual.
 - **`deletarDocumento`** (`tools/delete-voucher-tool.ts`) — exclui um voucher por `doc_id`. Mesma
   regra de confirmação explícita antes de chamar (ação irreversível), só na description da tool.
+- **`buscarRoteiro`** (`tools/get-daily-schedule-tool.ts`) — abre o `daily_schedule` atual da
+  viagem inteiro (`getTravelSchedule`, `services/travel-db.ts`) — os dias com evento confirmado
+  (cada um já com `date`/`period`/índice implícito na posição do array) e
+  `travel_start_at`/`travel_end_at`. Sem input — sempre a viagem do `requestContext`. Usado tanto
+  pra responder perguntas sobre o roteiro já montado quanto pro model descobrir a posição exata de
+  um evento antes de chamar `atualizarEventoRoteiro`.
+- **`atualizarEventoRoteiro`** (`tools/update-daily-schedule-event-tool.ts`) — corrige
+  `title`/`content` de UM evento já confirmado do roteiro, localizado por `(date, period, index)`
+  (`updateDailyScheduleEvent`, `services/travel-db.ts` — mesma função usada pela rota `PATCH
+  /travel_agent/daily-schedule/event`, `routes/daily-schedule-event-routes.ts`). Mesma regra de
+  confirmação explícita antes de chamar, só na description da tool. Não dispara
+  `triggerDailyScheduleUpdate`/`Rebuild` — a escrita já é direto em `daily_schedule` via
+  `saveTravelSchedule` (com `withTravelScheduleLock`), não em `voucher`.
+- **`buscarContextoViagem`** (`tools/get-travel-context-tool.ts`) — abre `travel.summary`
+  (`getTravelSummary`, `services/travel-db.ts`), o texto livre do campo "Contexto da Viagem" do
+  front (perfil do cliente, tipo de viagem, preferências etc. — ver
+  `original-miles-cartinhas/src/routes/index.tsx`, campo `tripContext`/`saveTripSummary`). Sem
+  input — sempre a viagem do `requestContext`. `summary` vem `null` se a viagem ainda não tiver
+  contexto cadastrado.
+- **`atualizarContextoViagem`** (`tools/update-travel-context-tool.ts`) — cria/substitui
+  `travel.summary` inteiro (`saveTravelSummary`, `services/travel-db.ts` — mesma função usada pela
+  rota `PUT /travel_agent/travel-summary`, `routes/travel-summary-routes.ts`; mesmo limite de 4000
+  caracteres). Não é um append: o texto novo substitui o anterior por completo. `summary: null`
+  (ou string vazia) limpa o campo. Mesma regra de nunca preencher por iniciativa própria sem o
+  consultor ter pedido, só na description da tool.
 
-Todas as três tools de escrita (criar/atualizar/excluir) disparam os mesmos gatilhos
+Todas as três tools de escrita de voucher (criar/atualizar/excluir) disparam os mesmos gatilhos
 fire-and-forget de `routes/voucher-routes.ts` para manter `travel.daily_schedule` reagindo a
 qualquer mudança de voucher, não só às feitas pelo pipeline de extração automática — ver
 `tools/daily-schedule-trigger.ts` (`triggerDailyScheduleUpdate`/`triggerDailyScheduleRebuild`).
@@ -86,9 +126,9 @@ mesma thread permite o agente lembrar o que ele mesmo perguntou.
 
 ## Arquivos desta pasta
 
-- `ori-agent.ts` — `Agent` (`memory`, as 4 tools, `structuredOutput: oriResultSchema`) + `askOri`,
+- `ori-agent.ts` — `Agent` (`memory`, as 8 tools, `structuredOutput: oriResultSchema`) + `askOri`,
   chamado pela rota.
 - `schema.ts` — `oriResultSchema`.
 - `prompts/system-prompt.ts` — `buildOriInstructions` (texto fixo do prompt + lista de vouchers).
-- `tools/` — as 4 tools + `daily-schedule-trigger.ts` (gatilhos compartilhados de criar/atualizar/
-  excluir).
+- `tools/` — as 8 tools + `daily-schedule-trigger.ts` (gatilhos compartilhados de criar/atualizar/
+  excluir voucher).
