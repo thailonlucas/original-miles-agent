@@ -12,6 +12,8 @@ import { getDailyScheduleTool } from './tools/get-daily-schedule-tool';
 import { updateDailyScheduleEventTool } from './tools/update-daily-schedule-event-tool';
 import { getTravelContextTool } from './tools/get-travel-context-tool';
 import { updateTravelContextTool } from './tools/update-travel-context-tool';
+import { getSuggestionsTool } from './tools/get-suggestions-tool';
+import { suggestActivitiesTool } from './tools/suggest-activities-tool';
 
 // Memória de conversa por sessão (thread) — sem ela, a confirmação pedida antes de criar um
 // voucher ("quer que eu adicione isso?", ver `tools/create-voucher-tool.ts`) não funcionaria: a
@@ -31,7 +33,9 @@ export const oriAgent = new Agent({
   name: 'Ori',
   description:
     'Agente da Original Miles usado pelos funcionários (consultores de viagem) para tirar dúvidas e montar o roteiro de uma viagem ' +
-    'a partir dos vouchers extraídos, e para gerenciar esses vouchers (buscar, criar, atualizar, excluir) pelo chat.',
+    'a partir dos vouchers extraídos, para gerenciar esses vouchers (buscar, criar, atualizar, excluir) pelo chat, e para gerar e ' +
+    'consultar sugestões de atividades — ajudando o consultor a enriquecer o roteiro com opções alinhadas ao perfil e às preferências ' +
+    'do cliente.',
   instructions: 'Aguardando os vouchers da viagem.',
   model: 'openai/gpt-5.6-terra',
   tools: {
@@ -43,6 +47,8 @@ export const oriAgent = new Agent({
     atualizarEventoRoteiro: updateDailyScheduleEventTool,
     buscarContextoViagem: getTravelContextTool,
     atualizarContextoViagem: updateTravelContextTool,
+    buscarSugestoes: getSuggestionsTool,
+    sugerirAtividades: suggestActivitiesTool,
   },
   memory: oriMemory,
   defaultOptions: {

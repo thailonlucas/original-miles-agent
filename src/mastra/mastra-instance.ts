@@ -21,7 +21,7 @@ import { voucherExtractionAgent } from './agents/voucher-extractor/extraction-ag
 import { dailyScheduleAgent } from './agents/daily-schedule/daily-schedule-agent';
 import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-suggestion-agent';
 import { oriAgent } from './agents/ori/ori-agent';
-import { voucherExtractRoute, voucherDeleteRoute } from './routes/voucher-routes';
+import { voucherExtractRoute, voucherDeleteRoute, voucherListRoute, voucherUpdateRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute, dailyScheduleGetRoute } from './routes/daily-schedule-routes';
 import { dailyScheduleEventUpdateRoute } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
@@ -74,6 +74,8 @@ export const mastra = new Mastra({
     apiRoutes: [
       voucherExtractRoute,
       voucherDeleteRoute,
+      voucherListRoute,
+      voucherUpdateRoute,
       dailyScheduleGenerateRoute,
       dailyScheduleGetRoute,
       dailyScheduleEventUpdateRoute,

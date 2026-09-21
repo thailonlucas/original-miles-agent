@@ -164,6 +164,18 @@ export async function getVoucherSummaries(tenantId: string, travelId: string, cl
   return rows.map((row) => ({ id: row.id, voucherTypeSlug: row.voucher_type_slug, title: row.title, content: row.content }));
 }
 
+// Lista completa (com `ai_extracted_data`) de todos os vouchers de uma viagem — usada pela rota
+// `GET /travel_agent/extract/vouchers` (`routes/voucher-routes.ts`), mesmas colunas devolvidas por
+// `insertVoucher`/`updateVoucherFields` (mesmo formato de item pros três endpoints).
+export async function getVouchers(tenantId: string, travelId: string): Promise<VoucherRecord[]> {
+  const { rows } = await getPool().query<VoucherRecord>(
+    `select id, tenant_id, travel_id, title, content, voucher_type_slug, file_url, ai_extracted_data, created_at as "createdAt"
+     from voucher where tenant_id = $1 and travel_id = $2 order by id`,
+    [tenantId, travelId],
+  );
+  return rows;
+}
+
 // Dados completos extraídos de UM voucher, por id — usado pela tool `openVoucher`
 // (`tools/open-voucher-tool.ts`), chamada pelo agente sob demanda em vez de todo `ai_extracted_data`
 // de todos os vouchers ir de uma vez no prompt.
@@ -516,6 +528,7 @@ export async function insertVoucher(input: InsertVoucherInput): Promise<VoucherR
 export interface UpdateVoucherInput {
   title?: string | null;
   content?: string | null;
+  voucherTypeSlug?: string;
   // Mesma ressalva de `insertVoucher` sobre jsonb-como-string: serializado duas vezes aqui embaixo
   // antes de ir pro Postgres.
   aiExtractedData?: Record<string, unknown> | null;
@@ -542,6 +555,10 @@ export async function updateVoucherFields(
   if ('content' in input) {
     columns.push('content');
     values.push(input.content);
+  }
+  if ('voucherTypeSlug' in input) {
+    columns.push('voucher_type_slug');
+    values.push(input.voucherTypeSlug);
   }
   if ('aiExtractedData' in input) {
     columns.push('ai_extracted_data');

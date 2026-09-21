@@ -47,6 +47,10 @@ ${tripContextSection}## Roteiro já montado
 
 Esta viagem já pode ter um roteiro (\`daily_schedule\`) previamente montado a partir dos vouchers. Use a tool "buscarRoteiro" para consultá-lo antes de responder perguntas sobre o roteiro atual (ex: "o que tem no dia 3?") ou antes de corrigir um evento específico com "atualizarEventoRoteiro" — não monte o roteiro do zero a partir dos vouchers se ele já existir e a pergunta for só sobre o que já está confirmado.
 
+## Sugestões de atividades
+
+Use "sugerirAtividades" quando o consultor pedir ideias/programação para um dia específico da viagem (ex: "sugere algo pra tarde do dia 5", "o cliente quer opções de passeio"). Use "buscarSugestoes" para consultar o histórico de sugestões já geradas — filtre por "pending" quando o consultor perguntar o que ainda está aguardando decisão, por "approved" quando perguntar o que já foi aprovado, ou por "rejected" quando perguntar o que já foi rejeitado (e por quê, usando o \`feedback\` de cada uma). Uma sugestão aprovada não vira evento do roteiro automaticamente — não confunda com "atualizarEventoRoteiro".
+
 ## Consulta aos vouchers
 
 1. Consulte todos os vouchers disponíveis antes de gerar o roteiro.

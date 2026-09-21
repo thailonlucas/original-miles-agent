@@ -1,9 +1,20 @@
 import { registerApiRoute } from '@mastra/core/server';
+import { z } from 'zod';
 import { extractVoucher, extractVoucherFromText } from '../agents/voucher-extractor/voucher-extractor';
 import { rebuildDailySchedule, updateDailyScheduleForVoucher } from '../agents/daily-schedule/rebuild-daily-schedule';
-import { insertVoucher, deleteVoucher, getTenantIdByEmail, type VoucherSummary } from '../services/travel-db';
+import {
+  insertVoucher,
+  deleteVoucher,
+  getVouchers,
+  updateVoucherFields,
+  getTenantIdByEmail,
+  getTenantIdByTravelId,
+  type VoucherSummary,
+  type UpdateVoucherInput,
+} from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { logConversationError } from '../helpers/logger';
+import { parseOrBadRequest } from './validate';
 
 // Ambas disparam em background — a resposta HTTP não espera o roteiro terminar de ser
 // atualizado/reconstruído (ver AGENTS.md de `agents/daily-schedule/`).
@@ -197,5 +208,125 @@ export const voucherDeleteRoute = registerApiRoute('/travel_agent/extract/vouche
 
     triggerDailyScheduleRebuild(tenantId, travelId, userId);
     return c.json({ deleted: true }, 200);
+  },
+});
+
+export const voucherListRoute = registerApiRoute('/travel_agent/extract/vouchers', {
+  method: 'GET',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Lista os vouchers de uma viagem',
+    description: 'Recebe `travel_id` via query string. Retorna um array de vouchers no mesmo formato do endpoint de criação (POST).',
+    tags: ['Vouchers'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    try {
+      ({ tenantId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const travelId = c.req.query('travel_id');
+    if (!travelId) {
+      return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
+    }
+
+    // Mesmo cuidado de escopo por tenant das outras rotas GET de travel_agent/* (ver
+    // `travel-summary-routes.ts`) — `travel_id` sozinho não garante isolamento.
+    const travelTenantId = await getTenantIdByTravelId(travelId);
+    if (travelTenantId && travelTenantId !== tenantId) {
+      return c.json({ error: 'not_found', message: `Viagem ${travelId} não encontrada.` }, 404);
+    }
+
+    const vouchers = await getVouchers(tenantId, travelId);
+    return c.json(vouchers, 200);
+  },
+});
+
+const updateBodySchema = z
+  .object({
+    id: z.union([z.string(), z.number()]).transform(String),
+    travel_id: z.string().min(1),
+    title: z.string().nullable().optional(),
+    content: z.string().nullable().optional(),
+    voucher_type_slug: z.string().min(1).optional(),
+    // JSON (serializado) dos dados extraídos — mesmo formato que o front já recebe/edita (ver
+    // `original-miles-cartinhas/src/components/cartinhas/vouchers/VoucherDetailModal.tsx`,
+    // `JSON.stringify(extracted ?? null)`), não o objeto direto.
+    ai_extracted_data: z.string().nullable().optional(),
+  })
+  .refine(
+    (body) =>
+      body.title !== undefined || body.content !== undefined || body.voucher_type_slug !== undefined || body.ai_extracted_data !== undefined,
+    { message: 'Informe ao menos um campo para atualizar (title, content, voucher_type_slug ou ai_extracted_data).' },
+  );
+
+export const voucherUpdateRoute = registerApiRoute('/travel_agent/extract/vouchers', {
+  method: 'PUT',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Atualiza campos de um voucher já cadastrado',
+    description:
+      'Body JSON: `id`, `travel_id` e ao menos um de `title`/`content`/`voucher_type_slug`/`ai_extracted_data` (JSON serializado ' +
+      'como string). Só os campos enviados são alterados; envie `null` explícito para limpar um campo. Dispara a mesma atualização ' +
+      'incremental de `daily_schedule` do voucher criado/editado pelo agente Ori.',
+    tags: ['Vouchers'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    let userId: string;
+    try {
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const rawBody = await c.req.json().catch(() => null);
+    const body = parseOrBadRequest(updateBodySchema, rawBody, c);
+    if (body instanceof Response) return body;
+
+    const travelTenantId = await getTenantIdByTravelId(body.travel_id);
+    if (travelTenantId && travelTenantId !== tenantId) {
+      return c.json({ error: 'not_found', message: `Viagem ${body.travel_id} não encontrada.` }, 404);
+    }
+
+    let aiExtractedData: Record<string, unknown> | null | undefined;
+    if (body.ai_extracted_data !== undefined) {
+      if (body.ai_extracted_data === null) {
+        aiExtractedData = null;
+      } else {
+        try {
+          aiExtractedData = JSON.parse(body.ai_extracted_data) as Record<string, unknown>;
+        } catch {
+          return c.json({ error: 'bad_request', message: '"ai_extracted_data" precisa ser um JSON válido (serializado como string).' }, 400);
+        }
+      }
+    }
+
+    const fields: UpdateVoucherInput = {};
+    if (body.title !== undefined) fields.title = body.title;
+    if (body.content !== undefined) fields.content = body.content;
+    if (body.voucher_type_slug !== undefined) fields.voucherTypeSlug = body.voucher_type_slug;
+    if (aiExtractedData !== undefined) fields.aiExtractedData = aiExtractedData;
+
+    const updated = await updateVoucherFields(tenantId, body.travel_id, body.id, fields);
+    if (!updated) {
+      return c.json({ error: 'not_found', message: `Voucher ${body.id} não encontrado para a viagem ${body.travel_id}.` }, 404);
+    }
+
+    triggerDailyScheduleUpdate(
+      tenantId,
+      body.travel_id,
+      { id: updated.id, title: updated.title, voucherTypeSlug: updated.voucher_type_slug, content: updated.content },
+      userId,
+    );
+    return c.json(updated, 200);
   },
 });
