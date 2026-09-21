@@ -20,10 +20,12 @@ import { textExtractionAgent } from './agents/voucher-extractor/text-extraction-
 import { voucherExtractionAgent } from './agents/voucher-extractor/extraction-agent';
 import { dailyScheduleAgent } from './agents/daily-schedule/daily-schedule-agent';
 import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-suggestion-agent';
+import { oriAgent } from './agents/ori/ori-agent';
 import { voucherExtractRoute, voucherDeleteRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute } from './routes/daily-schedule-routes';
 import { dailyScheduleEventUpdateRoute } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
+import { oriChatRoute } from './routes/ori-routes';
 import {
   scheduleSuggestionDecisionListRoute,
   scheduleSuggestionDecisionRoute,
@@ -61,6 +63,7 @@ export const mastra = new Mastra({
     voucherExtractionAgent,
     dailyScheduleAgent,
     scheduleSuggestionAgent,
+    oriAgent,
   },
   server: {
     // As rotas de travel_agent/* usam o access_token do Supabase Auth do usuário (requiresAuth:
@@ -71,6 +74,7 @@ export const mastra = new Mastra({
       voucherDeleteRoute,
       dailyScheduleGenerateRoute,
       dailyScheduleEventUpdateRoute,
+      oriChatRoute,
       scheduleSuggestionRoute,
       scheduleSuggestionDecisionRoute,
       scheduleSuggestionDecisionListRoute,

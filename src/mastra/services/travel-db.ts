@@ -512,3 +512,50 @@ export async function insertVoucher(input: InsertVoucherInput): Promise<VoucherR
   );
   return rows[0];
 }
+
+export interface UpdateVoucherInput {
+  title?: string | null;
+  content?: string | null;
+  // Mesma ressalva de `insertVoucher` sobre jsonb-como-string: serializado duas vezes aqui embaixo
+  // antes de ir pro Postgres.
+  aiExtractedData?: Record<string, unknown> | null;
+}
+
+// Atualiza campos de um voucher já existente (usado pela tool "atualizarDocumento" do agente Ori,
+// `agents/ori/tools/update-voucher-tool.ts`) — só grava os campos presentes em `input` (chave
+// ausente = não toca nesse campo; chave presente com `null` = limpa o campo). Sempre escopado por
+// tenant_id + travel_id, mesmo cuidado de `deleteVoucher`, pra nunca editar voucher de outra
+// viagem/tenant mesmo sabendo o id.
+export async function updateVoucherFields(
+  tenantId: string,
+  travelId: string,
+  voucherId: string,
+  input: UpdateVoucherInput,
+): Promise<VoucherRecord | null> {
+  const columns: string[] = [];
+  const values: unknown[] = [];
+
+  if ('title' in input) {
+    columns.push('title');
+    values.push(input.title);
+  }
+  if ('content' in input) {
+    columns.push('content');
+    values.push(input.content);
+  }
+  if ('aiExtractedData' in input) {
+    columns.push('ai_extracted_data');
+    values.push(input.aiExtractedData ? JSON.stringify(JSON.stringify(input.aiExtractedData)) : null);
+  }
+  if (columns.length === 0) {
+    throw new Error('updateVoucherFields: nenhum campo para atualizar.');
+  }
+
+  const setClause = columns.map((column, index) => `${column} = $${index + 4}`).join(', ');
+  const { rows } = await getPool().query<VoucherRecord>(
+    `update voucher set ${setClause} where tenant_id = $1 and travel_id = $2 and id = $3
+     returning id, tenant_id, travel_id, title, content, voucher_type_slug, file_url, ai_extracted_data, created_at as "createdAt"`,
+    [tenantId, travelId, voucherId, ...values],
+  );
+  return rows[0] ?? null;
+}
