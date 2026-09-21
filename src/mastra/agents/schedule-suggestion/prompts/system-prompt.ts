@@ -1,7 +1,11 @@
 import type { StoredSuggestion, VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
+import type { ScheduleSuggestionEvent, SchedulePeriod } from '../schema';
 
-function formatVoucherList(vouchers: VoucherSummary[]): string {
+// Reaproveitados pelo prompt do validador (`prompts/validation-prompt.ts`) — mesmo contexto
+// (vouchers, outros dias, histórico de decisões) que o gerador já usa, pra avaliar as sugestões
+// com a mesma base de informação com que foram criadas.
+export function formatVoucherList(vouchers: VoucherSummary[]): string {
   return JSON.stringify(
     vouchers.map((v) => ({ id: v.id, voucher_type_slug: v.voucherTypeSlug, title: v.title, content: v.content })),
     null,
@@ -13,7 +17,7 @@ function formatVoucherList(vouchers: VoucherSummary[]): string {
 // deslocamento (ex: check-out em uma cidade um dia, check-in em outra no dia seguinte) e do padrão
 // geral da viagem. O agente ainda precisa abrir os vouchers relevantes (tool "openVoucher") pra
 // qualquer detalhe usado de fato numa sugestão.
-function formatOtherDaysSummary(fullSchedule: DailyScheduleDay[], day: string): string {
+export function formatOtherDaysSummary(fullSchedule: DailyScheduleDay[], day: string): string {
   const otherDays = fullSchedule.filter((d) => d.date !== day);
   if (otherDays.length === 0) return '(nenhum outro dia com evento confirmado ainda)';
   return JSON.stringify(
@@ -30,7 +34,7 @@ function formatOtherDaysSummary(fullSchedule: DailyScheduleDay[], day: string): 
 // Compacto de propósito (sem "content") — só o suficiente pro model reconhecer padrão de gosto
 // (tipo de lugar, estilo) sem re-litigar o conteúdo de cada sugestão antiga. `client_feedback` (se
 // houver) é o motivo que a PESSOA deu ao decidir — sinal mais forte que "status" sozinho (ver regra 4.1).
-function formatDecisionHistory(decisionHistory: StoredSuggestion[]): string {
+export function formatDecisionHistory(decisionHistory: StoredSuggestion[]): string {
   if (decisionHistory.length === 0) return '(nenhuma decisão registrada ainda nesta viagem)';
   return JSON.stringify(
     decisionHistory.map((d) => ({
@@ -87,6 +91,40 @@ ${profileSection}
 9. "observation" segue a mesma regra dos eventos do roteiro: normalmente null; preencha só se a sugestão precisar registrar algum conflito/ressalva em relação a um evento já confirmado.`;
 }
 
+// Passada só nas chamadas de correção pontual do `schedule-suggestion-validator` (ver
+// `regeneratePeriodSuggestions` em `schedule-suggestion-agent.ts`) — substitui a instrução final
+// de "monte cerca de X sugestões pros três períodos" por um pedido focado em repor só as
+// sugestões de UM período que o validador rejeitou/flagou, sem duplicar as que já foram aprovadas.
+export interface SuggestionRepairRequest {
+  period: SchedulePeriod;
+  keep: ScheduleSuggestionEvent[];
+  replace: { suggestion: ScheduleSuggestionEvent; reason: string }[];
+}
+
+function formatRepairSection(repair: SuggestionRepairRequest): string {
+  return `## Correção pontual — período "${repair.period}"
+
+Esta chamada é só pra repor sugestões de UM período específico deste dia (${repair.period}) — um revisor automático de qualidade rejeitou/sinalizou as sugestões abaixo por não seguirem as regras acima. Gere substitutas plausíveis pras mesmas posições, cada uma corrigindo o motivo indicado — não repita o mesmo problema:
+${JSON.stringify(
+  repair.replace.map((r) => ({ title: r.suggestion.title, type: r.suggestion.type, motivo_da_rejeicao: r.reason })),
+  null,
+  2,
+)}
+
+Estas outras sugestões do MESMO período já foram aprovadas pelo revisor e devem ser mantidas como estão — não as gere de novo, não as repita e não proponha nada muito parecido com elas:
+${
+  repair.keep.length > 0
+    ? JSON.stringify(
+        repair.keep.map((k) => ({ title: k.title, type: k.type })),
+        null,
+        2,
+      )
+    : '(nenhuma — todas as sugestões deste período foram rejeitadas)'
+}
+
+Gere exatamente ${repair.replace.length} ${repair.replace.length === 1 ? 'sugestão substituta' : 'sugestões substitutas'} pro período "${repair.period}". Ignore os outros períodos — esta chamada não pede sugestões para eles.`;
+}
+
 export function buildSuggestionUserMessage(
   day: string,
   existingDay: DailyScheduleDay | null,
@@ -96,6 +134,7 @@ export function buildSuggestionUserMessage(
   prompt: string | null = null,
   quantity = 3,
   summary: string | null = null,
+  repair: SuggestionRepairRequest | null = null,
 ): string {
   return `Dia consultado: ${day}
 
@@ -115,5 +154,5 @@ ${summary ? `Resumo geral da viagem (contexto do cliente, cadastrado uma vez par
 
 ${prompt ? `Pedido específico do cliente para este dia (ver regra 4.2): "${prompt}"` : '(nenhum pedido específico do cliente para este dia — siga só as regras gerais)'}
 
-Monte cerca de ${quantity} ${quantity === 1 ? 'sugestão' : 'sugestões'} por período livre para manhã, tarde e noite deste dia.`;
+${repair ? formatRepairSection(repair) : `Monte cerca de ${quantity} ${quantity === 1 ? 'sugestão' : 'sugestões'} por período livre para manhã, tarde e noite deste dia.`}`;
 }

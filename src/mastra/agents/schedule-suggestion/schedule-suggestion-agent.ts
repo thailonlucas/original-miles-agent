@@ -3,8 +3,16 @@ import { RequestContext } from '@mastra/core/request-context';
 import type { StoredSuggestion, VoucherSummary } from '../../services/travel-db';
 import type { DailyScheduleDay } from '../daily-schedule/schema';
 import { openVoucherTool } from '../daily-schedule/tools/open-voucher-tool';
-import { buildSuggestionInstructions, buildSuggestionUserMessage } from './prompts/system-prompt';
-import { buildScheduleSuggestionResultSchema, scheduleSuggestionResultSchema, type ScheduleSuggestionResult } from './schema';
+import { buildSuggestionInstructions, buildSuggestionUserMessage, type SuggestionRepairRequest } from './prompts/system-prompt';
+import {
+  buildScheduleSuggestionPeriodSchema,
+  buildScheduleSuggestionResultSchema,
+  scheduleSuggestionResultSchema,
+  type ScheduleSuggestionEvent,
+  type ScheduleSuggestionPeriod,
+  type ScheduleSuggestionResult,
+  type SchedulePeriod,
+} from './schema';
 
 // Reaproveita a tool `openVoucher` do daily-schedule (mesmo contrato: `tenant_id` via
 // requestContext, nunca passado pelo model) — este agente também precisa abrir vouchers pra
@@ -48,4 +56,39 @@ export async function suggestActivitiesForDay(
     },
   );
   return object;
+}
+
+// Chamada de correção pontual, disparada por `suggest-day-activities.ts` quando o
+// `schedule-suggestion-validator` rejeita/sinaliza alguma sugestão de UM período. Reusa o mesmo
+// agente/tools (`openVoucher`) e o mesmo contexto do dia, mas restringe a saída a um único período
+// (`buildScheduleSuggestionPeriodSchema`, não o dia inteiro) e embute no prompt do usuário quais
+// sugestões manter e quais substituir (ver `formatRepairSection` em `prompts/system-prompt.ts`).
+export async function regeneratePeriodSuggestions(
+  period: SchedulePeriod,
+  day: string,
+  existingDay: DailyScheduleDay | null,
+  fullSchedule: DailyScheduleDay[],
+  vouchers: VoucherSummary[],
+  decisionHistory: StoredSuggestion[],
+  tenantId: string,
+  prompt: string | null,
+  summary: string | null,
+  keep: ScheduleSuggestionEvent[],
+  replace: { suggestion: ScheduleSuggestionEvent; reason: string }[],
+): Promise<ScheduleSuggestionEvent[]> {
+  if (replace.length === 0) return [];
+
+  const repair: SuggestionRepairRequest = { period, keep, replace };
+  // "quantity" aqui é só o número de substitutas pedidas (não o `quantity` original da chamada) —
+  // é o que define o "exatamente N sugestões" na descrição do schema pro período (ver `schema.ts`).
+  const { object } = await scheduleSuggestionAgent.generate(
+    buildSuggestionUserMessage(day, existingDay, fullSchedule, vouchers, decisionHistory, prompt, replace.length, summary, repair),
+    {
+      instructions: buildSuggestionInstructions(replace.length, prompt, summary),
+      structuredOutput: { schema: buildScheduleSuggestionPeriodSchema(replace.length) },
+      requestContext: new RequestContext([['tenant_id', tenantId]]),
+    },
+  );
+  const result = object as ScheduleSuggestionPeriod;
+  return result.suggestions;
 }

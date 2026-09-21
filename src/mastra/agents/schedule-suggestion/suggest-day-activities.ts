@@ -5,11 +5,90 @@ import {
   getTravelSummary,
   getVoucherSummaries,
   type StoredSuggestion,
+  type VoucherSummary,
 } from '../../services/travel-db';
 import { isRelevant } from '../daily-schedule/rebuild-daily-schedule';
 import { dailyScheduleSchema, type DailyScheduleDay } from '../daily-schedule/schema';
-import { suggestActivitiesForDay } from './schedule-suggestion-agent';
+import { regeneratePeriodSuggestions, suggestActivitiesForDay } from './schedule-suggestion-agent';
+import { validateSuggestions } from './schedule-suggestion-validator';
 import type { ScheduleSuggestionEvent, ScheduleSuggestionResult, SchedulePeriod } from './schema';
+
+// Quantas vezes o loop de correção tenta regenerar sugestões rejeitadas/sinalizadas pelo validador
+// antes de desistir e simplesmente descartá-las (ver `runValidationAndRepair` abaixo). 1 tentativa
+// é suficiente pro caso comum (poucas sugestões ruins por chamada) sem multiplicar custo/latência
+// indefinidamente se o validador continuar rejeitando o que o gerador propõe.
+const MAX_REPAIR_ATTEMPTS = 1;
+
+// Post-processor: roda o `schedule-suggestion-validator` sobre o resultado recém-gerado e, pra
+// cada período com sugestão rejeitada/sinalizada, pede ao gerador (`regeneratePeriodSuggestions`)
+// substitutas só pras posições problemáticas — mantendo as já aprovadas. Repete até
+// `MAX_REPAIR_ATTEMPTS` vezes; se ainda sobrar algo ruim depois disso, descarta (nunca deixa passar
+// pro cliente uma sugestão que o validador marcou como problema).
+async function runValidationAndRepair(
+  day: string,
+  existingDay: DailyScheduleDay | null,
+  fullSchedule: DailyScheduleDay[],
+  vouchers: VoucherSummary[],
+  decisionHistory: StoredSuggestion[],
+  tenantId: string,
+  prompt: string | null,
+  summary: string | null,
+  initial: ScheduleSuggestionResult,
+): Promise<ScheduleSuggestionResult> {
+  let current = initial;
+
+  for (let attempt = 0; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
+    const validation = await validateSuggestions(day, existingDay, fullSchedule, vouchers, decisionHistory, tenantId, prompt, summary, current);
+
+    const isLastAttempt = attempt === MAX_REPAIR_ATTEMPTS;
+    let anyBad = false;
+    const next: ScheduleSuggestionResult = { ...current };
+
+    for (const period of PERIODS as readonly SchedulePeriod[]) {
+      const suggestions = current[period].suggestions;
+      const verdicts = validation[period];
+      const keep: ScheduleSuggestionEvent[] = [];
+      const replace: { suggestion: ScheduleSuggestionEvent; reason: string }[] = [];
+
+      suggestions.forEach((suggestion, i) => {
+        const verdict = verdicts[i];
+        if (!verdict || verdict.verdict === 'approved') {
+          keep.push(suggestion);
+        } else {
+          anyBad = true;
+          replace.push({ suggestion, reason: verdict.reason });
+        }
+      });
+
+      if (replace.length === 0) continue;
+
+      if (isLastAttempt) {
+        // Última tentativa esgotada: descarta as que ainda estão ruins em vez de regenerar de novo.
+        next[period] = { has_existing_events: current[period].has_existing_events, suggestions: keep };
+      } else {
+        const regenerated = await regeneratePeriodSuggestions(
+          period,
+          day,
+          existingDay,
+          fullSchedule,
+          vouchers,
+          decisionHistory,
+          tenantId,
+          prompt,
+          summary,
+          keep,
+          replace,
+        );
+        next[period] = { has_existing_events: current[period].has_existing_events, suggestions: [...keep, ...regenerated] };
+      }
+    }
+
+    current = next;
+    if (!anyBad) break;
+  }
+
+  return current;
+}
 
 // Mesmo formato de `ScheduleSuggestionResult`, mas cada sugestão carrega o `id` com que acabou de
 // ser persistida como "pending" (ver `appendPendingSuggestions`) — o frontend usa esse id pra
@@ -55,17 +134,25 @@ export async function suggestDayActivities(
   const fullSchedule: DailyScheduleDay[] = parsedSchedule.success ? parsedSchedule.data : [];
   const existingDay: DailyScheduleDay | null = fullSchedule.find((d) => d.date === day) ?? null;
 
-  const result: ScheduleSuggestionResult = await suggestActivitiesForDay(
+  const relevantVouchers = vouchers.filter(isRelevant);
+
+  const generated: ScheduleSuggestionResult = await suggestActivitiesForDay(
     day,
     existingDay,
     fullSchedule,
-    vouchers.filter(isRelevant),
+    relevantVouchers,
     decisionHistory,
     tenantId,
     prompt,
     quantity,
     summary,
   );
+
+  // Post-processor: nunca persiste o que sai direto do gerador sem passar pelo validador (ver
+  // `runValidationAndRepair`) — garante que sugestões óbvias demais (repetidas do histórico,
+  // fora do nível esperado, violando restrição do cliente etc.) sejam corrigidas ou descartadas
+  // antes de chegar ao cliente.
+  const result = await runValidationAndRepair(day, existingDay, fullSchedule, relevantVouchers, decisionHistory, tenantId, prompt, summary, generated);
 
   const now = new Date().toISOString();
   const withIds: ScheduleSuggestionResultWithIds = {

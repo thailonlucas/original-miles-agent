@@ -36,7 +36,7 @@ export const scheduleSuggestionEventSchema = z.object({
 // `quantity` em `routes/schedule-suggestion-routes.ts`). Por isso o schema é construído por
 // chamada em `suggestActivitiesForDay` (mesmo padrão de `structuredOutput` por chamada de
 // `daily-schedule-agent.ts`), em vez de fixo no `defaultOptions` do agente.
-function buildScheduleSuggestionPeriodSchema(quantity: number) {
+export function buildScheduleSuggestionPeriodSchema(quantity: number) {
   return z.object({
     has_existing_events: z.boolean().describe('true se este período (manhã/tarde/noite) já tem pelo menos um evento confirmado no roteiro atual.'),
     suggestions: z
@@ -70,6 +70,27 @@ export const scheduleSuggestionResultSchema = buildScheduleSuggestionResultSchem
 // `routes/schedule-suggestion-decision-routes.ts`) pra saber em qual array de `events` a sugestão
 // aprovada entra.
 export const schedulePeriodSchema = z.enum(['morning', 'afternoon', 'night']);
+
+// Veredito do agente `schedule-suggestion-validator` (post-processor) para UMA sugestão gerada —
+// ver `prompts/validation-prompt.ts` para a lista de regras checadas. A resposta do validador
+// correlaciona por POSIÇÃO com as sugestões enviadas a ele (mesma ordem, mesma quantidade por
+// período), não por id — a sugestão ainda não tem id nesta etapa (ver `suggest-day-activities.ts`).
+export const scheduleSuggestionVerdictSchema = z.object({
+  verdict: z
+    .enum(['approved', 'flagged', 'rejected'])
+    .describe('"approved": pode ir ao cliente sem alteração. "flagged"/"rejected": tem um problema, precisa ser regenerada.'),
+  violated_rules: z.array(z.string()).describe('Números das regras violadas (ver instruções do validador). Vazio se "approved".'),
+  reason: z.string().describe('Frase objetiva explicando o veredito.'),
+});
+
+export const scheduleSuggestionValidationSchema = z.object({
+  morning: z.array(scheduleSuggestionVerdictSchema).describe('Um veredito por sugestão do período "morning", na mesma ordem em que foi enviada.'),
+  afternoon: z.array(scheduleSuggestionVerdictSchema).describe('Um veredito por sugestão do período "afternoon", na mesma ordem em que foi enviada.'),
+  night: z.array(scheduleSuggestionVerdictSchema).describe('Um veredito por sugestão do período "night", na mesma ordem em que foi enviada.'),
+});
+
+export type ScheduleSuggestionVerdict = z.infer<typeof scheduleSuggestionVerdictSchema>;
+export type ScheduleSuggestionValidation = z.infer<typeof scheduleSuggestionValidationSchema>;
 
 export type ScheduleSuggestionEvent = z.infer<typeof scheduleSuggestionEventSchema>;
 export type ScheduleSuggestionPeriod = z.infer<typeof scheduleSuggestionPeriodSchema>;
