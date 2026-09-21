@@ -30,7 +30,10 @@ export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
       'Form fields: `travel_id`, `session_id`, `prompt`. Injeta a lista de vouchers já extraídos da viagem (id/title/content) no contexto ' +
       'do agente e devolve a resposta gerada. `session_id` isola a memória de conversa (o Ori lembra do que já foi dito na mesma ' +
       'sessão, inclusive para confirmar a criação de um voucher pedida numa mensagem anterior). O Ori pode buscar, criar, atualizar ' +
-      'e excluir vouchers da viagem através de tools próprias, sempre escopadas ao tenant/viagem do usuário autenticado.',
+      'e excluir vouchers da viagem através de tools próprias, sempre escopadas ao tenant/viagem do usuário autenticado. A resposta ' +
+      'inclui `updated_data` (boolean, calculado pelo backend, não pela IA): `true` quando esta resposta chamou alguma tool de ' +
+      'escrita (voucher, evento do dia a dia, contexto da viagem ou sugestões) — sinal pro front saber que precisa recarregar os ' +
+      'dados da viagem, sem indicar especificamente o que mudou.',
     tags: ['Ori'],
   },
   handler: async (c) => {

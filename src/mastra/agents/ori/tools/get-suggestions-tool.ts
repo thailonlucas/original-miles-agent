@@ -12,7 +12,7 @@ export const getSuggestionsTool = createTool({
     'Lista as sugestões de atividades já geradas para esta viagem (pelo agente de sugestões), com filtro opcional por status: ' +
     '"pending" (aguardando decisão do consultor/cliente), "approved" (aprovadas), "rejected" (rejeitadas) ou "all" (todas — default). ' +
     'Use para responder perguntas como "quais sugestões já geramos?", "o que já foi aprovado?" ou "o que o cliente rejeitou?". ' +
-    'Aprovar uma sugestão aqui NÃO insere um evento no roteiro (daily_schedule) — é só um registro de intenção.',
+    'Aprovar uma sugestão aqui NÃO insere um evento no dia a dia (daily_schedule) — é só um registro de intenção.',
   inputSchema: z.object({
     status: z
       .enum(['pending', 'approved', 'rejected', 'all'])

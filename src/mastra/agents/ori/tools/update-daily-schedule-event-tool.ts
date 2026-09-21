@@ -3,28 +3,30 @@ import { z } from 'zod';
 import { schedulePeriodSchema } from '../../schedule-suggestion/schema';
 import { updateDailyScheduleEvent } from '../../../services/travel-db';
 
-// "Atualizar Evento do Roteiro" — corrige título/conteúdo de UM evento já confirmado do roteiro
-// (originado de voucher), localizado por (date, period, index) — mesmo contrato de
+// "Atualizar Evento do Dia a Dia" — corrige título/conteúdo de UM evento já confirmado do dia a
+// dia (originado de voucher), localizado por (date, period, index) — mesmo contrato de
 // `routes/daily-schedule-event-routes.ts` (PATCH /travel_agent/daily-schedule/event), só que
 // disparado pelo chat em vez do app. `tenant_id`/`travel_id`/`user_id` vêm do `requestContext`,
 // mesmo contrato das outras tools deste agente.
 export const updateDailyScheduleEventTool = createTool({
-  id: 'atualizarEventoRoteiro',
+  id: 'atualizarEventoDiaADia',
   description:
-    'Corrige o título e/ou conteúdo de um evento já existente no roteiro (daily_schedule), localizado por data, período ' +
-    '("morning", "afternoon" ou "night") e índice dentro daquele período — use "buscarRoteiro" primeiro para saber a posição exata ' +
-    'do evento. Use quando o consultor apontar que uma informação do roteiro está errada ou desatualizada e informar qual é o valor ' +
-    'correto. Só envie os campos que realmente precisam mudar. Nunca chame esta tool para "corrigir" algo que você mesmo suspeita ' +
-    'estar errado sem o consultor ter confirmado isso na conversa.',
+    'Corrige o título e/ou conteúdo de um evento já existente no dia a dia (também chamado de roteiro, campo daily_schedule), ' +
+    'localizado por data, período ("morning", "afternoon" ou "night") e índice dentro daquele período — use "buscarDiaADia" primeiro ' +
+    'para saber a posição exata do evento. Use quando o consultor apontar que uma informação do dia a dia está errada ou desatualizada ' +
+    'e informar qual é o valor correto. Só envie os campos que realmente precisam mudar. REGRA OBRIGATÓRIA: ao identificar uma ' +
+    'correção possível, primeiro pergunte ao consultor se é isso mesmo que ele quer mudar e o que deve ficar no lugar — nunca chame ' +
+    'esta tool na mesma resposta em que você identificou o problema. Só chame depois que o consultor confirmar explicitamente numa ' +
+    'mensagem seguinte.',
   inputSchema: z
     .object({
-      date: z.string().describe('Data do dia do evento, no formato YYYY-MM-DD (de "buscarRoteiro").'),
+      date: z.string().describe('Data do dia do evento, no formato YYYY-MM-DD (de "buscarDiaADia").'),
       period: schedulePeriodSchema.describe('Período do dia do evento: "morning", "afternoon" ou "night".'),
       index: z
         .number()
         .int()
         .min(0)
-        .describe('Posição (0-based) do evento dentro do array daquele dia/período, vinda de "buscarRoteiro".'),
+        .describe('Posição (0-based) do evento dentro do array daquele dia/período, vinda de "buscarDiaADia".'),
       title: z.string().optional().describe('Novo título do evento, se precisar mudar.'),
       content: z.string().optional().describe('Novo conteúdo (markdown) do evento, se precisar mudar.'),
     })
@@ -37,7 +39,7 @@ export const updateDailyScheduleEventTool = createTool({
     const travelId = requestContext.get<string, string>('travel_id');
     const userId = requestContext.get<string, string>('user_id');
     if (!tenantId || !travelId || !userId) {
-      throw new Error('atualizarEventoRoteiro: requestContext "tenant_id"/"travel_id"/"user_id" são obrigatórios.');
+      throw new Error('atualizarEventoDiaADia: requestContext "tenant_id"/"travel_id"/"user_id" são obrigatórios.');
     }
 
     const updated = await updateDailyScheduleEvent(tenantId, travelId, userId, date, period, index, { title, content });

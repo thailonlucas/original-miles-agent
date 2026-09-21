@@ -12,7 +12,7 @@ export const getTravelContextTool = createTool({
   description:
     'Abre o "Contexto da Viagem" cadastrado pelo consultor: um resumo livre com perfil do cliente, tipo de viagem, preferências ' +
     'etc., que complementa (mas não substitui) os vouchers. Use para entender melhor o cliente/a viagem antes de responder, montar ' +
-    'o roteiro ou sugerir algo. `summary` vem `null` quando a viagem ainda não tem nenhum contexto cadastrado.',
+    'o dia a dia ou sugerir algo. `summary` vem `null` quando a viagem ainda não tem nenhum contexto cadastrado.',
   inputSchema: z.object({}),
   outputSchema: z.unknown(),
   execute: async (_, { requestContext }) => {

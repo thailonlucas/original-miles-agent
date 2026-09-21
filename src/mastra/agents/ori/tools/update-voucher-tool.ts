@@ -11,8 +11,9 @@ export const updateVoucherTool = createTool({
   description:
     'Atualiza um voucher (documento) já existente, pelo doc_id da lista de vouchers disponível. Use quando o consultor apontar que ' +
     'uma informação extraída está errada, incompleta ou desatualizada, e informar qual é o valor correto. Só envie os campos que ' +
-    'realmente precisam mudar — campos não informados permanecem como estão. Nunca chame esta tool para "corrigir" algo que você ' +
-    'mesmo suspeita estar errado sem o consultor ter confirmado isso na conversa.',
+    'realmente precisam mudar — campos não informados permanecem como estão. REGRA OBRIGATÓRIA: ao identificar uma correção possível, ' +
+    'primeiro pergunte ao consultor se é isso mesmo que ele quer mudar — nunca chame esta tool na mesma resposta em que você ' +
+    'identificou o problema. Só chame depois que ele confirmar explicitamente numa mensagem seguinte.',
   inputSchema: z
     .object({
       docId: z.string().describe('doc_id do voucher a atualizar, da lista de vouchers disponível.'),

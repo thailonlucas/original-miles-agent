@@ -9,8 +9,10 @@ import { triggerDailyScheduleRebuild } from './daily-schedule-trigger';
 export const deleteVoucherTool = createTool({
   id: 'deletarDocumento',
   description:
-    'Exclui definitivamente um voucher (documento) da viagem, pelo doc_id da lista de vouchers disponível. Ação irreversível — só ' +
-    'use depois que o consultor confirmar explicitamente que quer excluir este voucher específico.',
+    'Exclui definitivamente um voucher (documento) da viagem, pelo doc_id da lista de vouchers disponível. Ação irreversível — ' +
+    'REGRA OBRIGATÓRIA: primeiro pergunte ao consultor se ele tem certeza que quer excluir este voucher específico — nunca chame ' +
+    'esta tool na mesma resposta em que a exclusão foi pedida/identificada. Só chame depois que ele confirmar explicitamente numa ' +
+    'mensagem seguinte.',
   inputSchema: z.object({
     docId: z.string().describe('doc_id do voucher a excluir, da lista de vouchers disponível.'),
   }),

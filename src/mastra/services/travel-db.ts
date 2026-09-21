@@ -259,12 +259,14 @@ export async function saveTravelSchedule(tenantId: string, travelId: string, sta
 }
 
 // Edita título/conteúdo de UM evento já confirmado do roteiro (originado de voucher) — mesma ideia
-// de editar um voucher (`updateVoucher` no frontend), aplicada a um evento específico dentro de
-// `daily_schedule`. Localiza o evento por (date, period, index) — frágil se o roteiro for
-// reconstruído entre o usuário abrir a tela e salvar (o índice pode não bater mais), mas aceitável
-// pra uma edição rápida logo após ver a lista, mesmo risco que outras escritas otimistas do app.
-// Usa o mesmo lock de `daily_schedule` das outras escritas (`rebuild-daily-schedule.ts` etc.) pra
-// não pisar num rebuild/update incremental disparado ao mesmo tempo por um voucher novo.
+// de editar um voucher (`updateVoucher` no frontend) — e/ou MOVE esse evento pra outro dia/período
+// (`newDate`/`newPeriod`), mesma ação do drag-and-drop do front (`handleMoveEvent`,
+// `DailyScheduleResponse.tsx`). Localiza o evento de origem por (date, period, index) — frágil se o
+// roteiro for reconstruído entre o usuário abrir a tela e salvar (o índice pode não bater mais),
+// mas aceitável pra uma edição/move rápido logo após ver a lista, mesmo risco que outras escritas
+// otimistas do app. Usa o mesmo lock de `daily_schedule` das outras escritas
+// (`rebuild-daily-schedule.ts` etc.) pra não pisar num rebuild/update incremental disparado ao
+// mesmo tempo por um voucher novo.
 export async function updateDailyScheduleEvent(
   tenantId: string,
   travelId: string,
@@ -272,7 +274,7 @@ export async function updateDailyScheduleEvent(
   date: string,
   period: 'morning' | 'afternoon' | 'night',
   index: number,
-  patch: { title?: string; content?: string },
+  patch: { title?: string; content?: string; newDate?: string; newPeriod?: 'morning' | 'afternoon' | 'night' },
 ): Promise<DailyScheduleEvent | null> {
   return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const state = await getTravelSchedule(tenantId, travelId, client);
@@ -293,10 +295,64 @@ export async function updateDailyScheduleEvent(
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.content !== undefined ? { content: patch.content } : {}),
     };
-    const newEvents = [...events];
-    newEvents[index] = updatedEvent;
-    const newDays: DailyScheduleDay[] = [...days];
-    newDays[dayIndex] = { ...day, events: { ...day.events, [period]: newEvents } };
+
+    const targetDate = patch.newDate ?? date;
+    const targetPeriod = patch.newPeriod ?? period;
+    let newDays: DailyScheduleDay[];
+
+    if (targetDate === date && targetPeriod === period) {
+      // Sem move — mesmo caminho de sempre, substitui o evento no lugar (preserva a posição).
+      const newEvents = [...events];
+      newEvents[index] = updatedEvent;
+      newDays = [...days];
+      newDays[dayIndex] = { ...day, events: { ...day.events, [period]: newEvents } };
+    } else if (targetDate === date) {
+      // Move só de período, mesmo dia — o dia nunca fica vazio no meio do caminho (o evento sai de
+      // um período e entra no outro do MESMO objeto), então preserva o `title` do dia sem recriar
+      // nada.
+      const sourceEvents = events.filter((_, i) => i !== index);
+      newDays = [...days];
+      newDays[dayIndex] = {
+        ...day,
+        events: { ...day.events, [period]: sourceEvents, [targetPeriod]: [...day.events[targetPeriod], updatedEvent] },
+      };
+    } else {
+      // Move de dia — remove do dia de origem (removendo o dia inteiro da lista se ficar sem
+      // nenhum evento, já que `daily_schedule` é esparso: só guarda dias com >=1 evento) e insere
+      // no dia de destino, criando-o (ordenado por data) se ele ainda não existir na lista.
+      const remainingSourceEvents = events.filter((_, i) => i !== index);
+      const sourceDay: DailyScheduleDay = { ...day, events: { ...day.events, [period]: remainingSourceEvents } };
+      const sourceIsEmpty =
+        sourceDay.events.morning.length === 0 && sourceDay.events.afternoon.length === 0 && sourceDay.events.night.length === 0;
+
+      const daysWithoutSourceEvent = [...days];
+      if (sourceIsEmpty) {
+        daysWithoutSourceEvent.splice(dayIndex, 1);
+      } else {
+        daysWithoutSourceEvent[dayIndex] = sourceDay;
+      }
+
+      const destIndex = daysWithoutSourceEvent.findIndex((d) => d.date === targetDate);
+      if (destIndex >= 0) {
+        const destDay = daysWithoutSourceEvent[destIndex];
+        daysWithoutSourceEvent[destIndex] = {
+          ...destDay,
+          events: { ...destDay.events, [targetPeriod]: [...destDay.events[targetPeriod], updatedEvent] },
+        };
+      } else {
+        // Dia novo (ainda sem nenhum evento) — sem uma chamada de IA aqui pra gerar um título
+        // melhor pro dia, usa o título do próprio evento movido.
+        const newDay: DailyScheduleDay = {
+          date: targetDate,
+          title: updatedEvent.title,
+          events: { morning: [], afternoon: [], night: [], [targetPeriod]: [updatedEvent] },
+        };
+        const insertAt = daysWithoutSourceEvent.findIndex((d) => d.date > targetDate);
+        if (insertAt < 0) daysWithoutSourceEvent.push(newDay);
+        else daysWithoutSourceEvent.splice(insertAt, 0, newDay);
+      }
+      newDays = daysWithoutSourceEvent;
+    }
 
     await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt: state.travelStartAt, travelEndAt: state.travelEndAt }, client);
     return updatedEvent;

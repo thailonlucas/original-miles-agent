@@ -26,19 +26,26 @@ const updateBodySchema = z
     index: z.number().int().min(0),
     title: z.string().min(1).optional(),
     content: z.string().min(1).optional(),
+    // Destino do move (drag-and-drop do front, `handleMoveEvent` em `DailyScheduleResponse.tsx`) —
+    // omitidos = edição no lugar; presentes = move o evento pra este dia/período (cria o dia se
+    // ele ainda não tiver nenhum evento).
+    new_date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').optional(),
+    new_period: schedulePeriodSchema.optional(),
   })
-  .refine((body) => body.title !== undefined || body.content !== undefined, {
-    message: 'Informe "title" e/ou "content" pra atualizar.',
+  .refine((body) => body.title !== undefined || body.content !== undefined || body.new_date !== undefined || body.new_period !== undefined, {
+    message: 'Informe "title"/"content" pra editar, e/ou "new_date"/"new_period" pra mover o evento.',
   });
 
 export const dailyScheduleEventUpdateRoute = registerApiRoute('/travel_agent/daily-schedule/event', {
   method: 'PATCH',
   requiresAuth: false,
   openapi: {
-    summary: 'Edita título/conteúdo de um evento já confirmado do roteiro (originado de voucher)',
+    summary: 'Edita título/conteúdo de um evento já confirmado do roteiro, e/ou move ele pra outro dia/período',
     description:
-      'Recebe `travel_id`, `date`, `period`, `index` (posição do evento no array daquele dia/período) e `title`/`content` ' +
-      '(pelo menos um dos dois). Mesma ideia de editar um voucher, aplicada a um evento específico de `travel.daily_schedule`.',
+      'Recebe `travel_id`, `date`, `period`, `index` (posição atual do evento) e ao menos um de: `title`/`content` (edição no ' +
+      'lugar) ou `new_date`/`new_period` (move o evento pra outro dia/período — mesma chamada usada pelo drag-and-drop do dia a ' +
+      'dia no front). Cria o dia de destino se ele ainda não tiver nenhum evento; remove o dia de origem da lista se ele ficar ' +
+      'vazio depois do move.',
     tags: ['Daily Schedule'],
   },
   handler: async (c) => {
@@ -65,6 +72,8 @@ export const dailyScheduleEventUpdateRoute = registerApiRoute('/travel_agent/dai
     const updated = await updateDailyScheduleEvent(tenantId, body.travel_id, userId, body.date, body.period, body.index, {
       title: body.title,
       content: body.content,
+      newDate: body.new_date,
+      newPeriod: body.new_period,
     });
     if (!updated) {
       return c.json({ error: 'not_found', message: 'Evento não encontrado nesse dia/período/índice.' }, 404);

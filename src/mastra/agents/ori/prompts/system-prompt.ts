@@ -13,11 +13,11 @@ function formatVoucherList(vouchers: VoucherSummary[]): string {
 }
 
 // Prompt atual do agente (hoje em produção no n8n) — reproduzido sem alteração de texto, ver
-// AGENTS.md desta pasta. Três seções são dinâmicas/adicionadas por cima do texto original:
+// AGENTS.md desta pasta. Quatro seções são dinâmicas/adicionadas por cima do texto original:
 // "## Documentos disponíveis" (a lista real de vouchers, via `formatVoucherList`), "## Contexto da
-// viagem" (o `tripContext`/`travel.summary` cadastrado no front, quando existir) e o aviso sobre o
-// roteiro (`daily_schedule`) já montado — ver AGENTS.md sobre por que este último é uma exceção à
-// regra de "nenhuma instrução de tool no prompt".
+// viagem" (o `tripContext`/`travel.summary` cadastrado no front, quando existir), o aviso sobre o
+// dia a dia (`daily_schedule`) já montado e o aviso sobre sugestões de atividades — ver AGENTS.md
+// sobre por que essas duas últimas são exceção à regra de "nenhuma instrução de tool no prompt".
 export function buildOriInstructions(vouchers: VoucherSummary[], tripContext: string | null): string {
   const tripContextSection = tripContext
     ? `## Contexto da viagem
@@ -43,13 +43,13 @@ Os vouchers extraídos estão disponíveis abaixo:
 ${formatVoucherList(vouchers)}
 \`\`\`
 
-${tripContextSection}## Roteiro já montado
+${tripContextSection}## Dia a dia já montado
 
-Esta viagem já pode ter um roteiro (\`daily_schedule\`) previamente montado a partir dos vouchers. Use a tool "buscarRoteiro" para consultá-lo antes de responder perguntas sobre o roteiro atual (ex: "o que tem no dia 3?") ou antes de corrigir um evento específico com "atualizarEventoRoteiro" — não monte o roteiro do zero a partir dos vouchers se ele já existir e a pergunta for só sobre o que já está confirmado.
+"Dia a dia" é como o consultor chama o roteiro da viagem (\`daily_schedule\`) na prática — trate os dois termos como sinônimos, mas prefira dizer "dia a dia" nas suas respostas, é o que ele espera ouvir. Esta viagem já pode ter um dia a dia previamente montado a partir dos vouchers. Use a tool "buscarDiaADia" para consultá-lo antes de responder perguntas sobre o que já está confirmado (ex: "o que tem no dia 3?") ou antes de corrigir um evento específico com "atualizarEventoDiaADia" — não monte o dia a dia do zero a partir dos vouchers se ele já existir e a pergunta for só sobre o que já está confirmado.
 
 ## Sugestões de atividades
 
-Use "sugerirAtividades" quando o consultor pedir ideias/programação para um dia específico da viagem (ex: "sugere algo pra tarde do dia 5", "o cliente quer opções de passeio"). Use "buscarSugestoes" para consultar o histórico de sugestões já geradas — filtre por "pending" quando o consultor perguntar o que ainda está aguardando decisão, por "approved" quando perguntar o que já foi aprovado, ou por "rejected" quando perguntar o que já foi rejeitado (e por quê, usando o \`feedback\` de cada uma). Uma sugestão aprovada não vira evento do roteiro automaticamente — não confunda com "atualizarEventoRoteiro".
+Use "sugerirAtividades" quando o consultor pedir ideias/programação para um dia específico da viagem (ex: "sugere algo pra tarde do dia 5", "o cliente quer opções de passeio"). Use "buscarSugestoes" para consultar o histórico de sugestões já geradas — filtre por "pending" quando o consultor perguntar o que ainda está aguardando decisão, por "approved" quando perguntar o que já foi aprovado, ou por "rejected" quando perguntar o que já foi rejeitado (e por quê, usando o \`feedback\` de cada uma). Uma sugestão aprovada não vira evento do dia a dia automaticamente — não confunda com "atualizarEventoDiaADia".
 
 ## Consulta aos vouchers
 

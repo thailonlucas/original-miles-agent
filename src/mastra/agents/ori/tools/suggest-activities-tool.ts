@@ -4,20 +4,24 @@ import { suggestDayActivities } from '../../schedule-suggestion/suggest-day-acti
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-// "Sugerir Atividades" — gera novas sugestões de atividades para um dia específico do roteiro
+// "Sugerir Atividades" — gera novas sugestões de atividades para um dia específico do dia a dia
 // (mesmo fluxo de `routes/schedule-suggestion-routes.ts`, disparado pelo chat em vez do app). Pra
 // cada período do dia (manhã/tarde/noite): se já houver evento confirmado, sugere atividades
 // ADICIONAIS que combinem com ele; se o período estiver livre, sugere opções com base nos
-// vouchers/contexto da viagem. Grava as sugestões como "pending" — não insere nada no roteiro.
+// vouchers/contexto da viagem. Grava as sugestões como "pending" — não insere nada no dia a dia.
+// Não exige confirmação prévia como as tools de editar/excluir: pedir sugestões já É o pedido
+// explícito do consultor, e nada existente é sobrescrito ou apagado (a sugestão fica pendente até
+// ser aprovada/rejeitada depois, por um fluxo separado).
 export const suggestActivitiesTool = createTool({
   id: 'sugerirAtividades',
   description:
-    'Gera novas sugestões de atividades para um dia específico do roteiro (manhã/tarde/noite), com base nos vouchers da viagem e, ' +
+    'Gera novas sugestões de atividades para um dia específico do dia a dia (manhã/tarde/noite), com base nos vouchers da viagem e, ' +
     'opcionalmente, num pedido em texto livre do consultor/cliente (ex: "passeio no parque", "algo romântico à noite"). Use quando o ' +
-    'consultor pedir sugestões/ideias de programação para um dia. As sugestões são gravadas como "pending" (aguardando aprovação) — ' +
-    'nunca são inseridas direto no roteiro; use "buscarSugestoes" depois para conferir o que foi gerado, aprovado ou rejeitado.',
+    'consultor pedir sugestões/ideias de programação para um dia — pode chamar direto, sem confirmar antes, já que gerar sugestões ' +
+    'não altera nada do que já existe. As sugestões são gravadas como "pending" (aguardando aprovação) — nunca são inseridas direto ' +
+    'no dia a dia; use "buscarSugestoes" depois para conferir o que foi gerado, aprovado ou rejeitado.',
   inputSchema: z.object({
-    day: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').describe('Dia do roteiro para o qual gerar sugestões, no formato YYYY-MM-DD.'),
+    day: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').describe('Dia do dia a dia para o qual gerar sugestões, no formato YYYY-MM-DD.'),
     prompt: z
       .string()
       .max(500)

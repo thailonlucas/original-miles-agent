@@ -15,9 +15,11 @@ export const updateTravelContextTool = createTool({
   id: 'atualizarContextoViagem',
   description:
     'Cria ou substitui o "Contexto da Viagem" cadastrado pelo consultor (perfil do cliente, tipo de viagem, preferências etc.) — ' +
-    'complementa os vouchers, não é extraído deles. Substitui o texto inteiro (não é um append). Use quando o consultor pedir para ' +
-    'anotar/atualizar essa informação, ou mandar limpar o campo (envie `summary: null` nesse caso). Nunca preencha esse campo por ' +
-    'iniciativa própria com algo que o consultor não pediu explicitamente para registrar.',
+    'complementa os vouchers, não é extraído deles. Substitui o texto inteiro (não é um append), inclusive apagando o que já estava ' +
+    'escrito. Use quando o consultor pedir para anotar/atualizar essa informação, ou mandar limpar o campo (envie `summary: null` ' +
+    'nesse caso). Nunca preencha esse campo por iniciativa própria com algo que o consultor não pediu explicitamente para registrar. ' +
+    'REGRA OBRIGATÓRIA: se o novo texto for substituir um contexto já cadastrado (não só criar um novo do zero), confirme com o ' +
+    'consultor antes de sobrescrever — nunca chame esta tool na mesma resposta em que você propôs a mudança.',
   inputSchema: z.object({
     summary: z
       .string()

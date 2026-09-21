@@ -3,7 +3,7 @@ import { Memory } from '@mastra/memory';
 import { RequestContext } from '@mastra/core/request-context';
 import { getVoucherSummaries, getTravelSummary } from '../../services/travel-db';
 import { buildOriInstructions } from './prompts/system-prompt';
-import { oriResultSchema, type OriResult } from './schema';
+import { oriResultSchema, type OriResponse } from './schema';
 import { searchVoucherTool } from './tools/search-voucher-tool';
 import { updateVoucherTool } from './tools/update-voucher-tool';
 import { createVoucherTool } from './tools/create-voucher-tool';
@@ -26,16 +26,30 @@ const oriMemory = new Memory({
   },
 });
 
+// Ids das tools que escrevem/alteram dado (o resto é só leitura) — usado só por `askOri` abaixo
+// pra calcular `updated_data` a partir de `toolCalls` do `generate()`, sem depender da LLM
+// preencher esse campo (custaria tokens de saída à toa e seria menos confiável que checar o que
+// de fato foi chamado). `sugerirAtividades` entra aqui porque grava sugestões novas (mesmo não
+// sobrescrevendo nada existente) — o front também precisa saber que há dado novo pra mostrar.
+const WRITE_TOOL_IDS = new Set<string>([
+  createVoucherTool.id,
+  updateVoucherTool.id,
+  deleteVoucherTool.id,
+  updateDailyScheduleEventTool.id,
+  updateTravelContextTool.id,
+  suggestActivitiesTool.id,
+]);
+
 // Instructions reais (com a lista de vouchers da viagem) são montadas por chamada, ver
 // `askOri` abaixo — mesmo padrão de `agents/daily-schedule/daily-schedule-agent.ts`.
 export const oriAgent = new Agent({
   id: 'ori',
   name: 'Ori',
   description:
-    'Agente da Original Miles usado pelos funcionários (consultores de viagem) para tirar dúvidas e montar o roteiro de uma viagem ' +
-    'a partir dos vouchers extraídos, para gerenciar esses vouchers (buscar, criar, atualizar, excluir) pelo chat, e para gerar e ' +
-    'consultar sugestões de atividades — ajudando o consultor a enriquecer o roteiro com opções alinhadas ao perfil e às preferências ' +
-    'do cliente.',
+    'Agente da Original Miles usado pelos funcionários (consultores de viagem) para tirar dúvidas e montar o dia a dia (roteiro) de ' +
+    'uma viagem a partir dos vouchers extraídos, para gerenciar esses vouchers (buscar, criar, atualizar, excluir) pelo chat, e para ' +
+    'gerar e consultar sugestões de atividades — ajudando o consultor a enriquecer o dia a dia com opções alinhadas ao perfil e às ' +
+    'preferências do cliente.',
   instructions: 'Aguardando os vouchers da viagem.',
   model: 'openai/gpt-5.6-terra',
   tools: {
@@ -43,8 +57,8 @@ export const oriAgent = new Agent({
     atualizarDocumento: updateVoucherTool,
     criarDocumento: createVoucherTool,
     deletarDocumento: deleteVoucherTool,
-    buscarRoteiro: getDailyScheduleTool,
-    atualizarEventoRoteiro: updateDailyScheduleEventTool,
+    buscarDiaADia: getDailyScheduleTool,
+    atualizarEventoDiaADia: updateDailyScheduleEventTool,
     buscarContextoViagem: getTravelContextTool,
     atualizarContextoViagem: updateTravelContextTool,
     buscarSugestoes: getSuggestionsTool,
@@ -65,10 +79,10 @@ export const oriAgent = new Agent({
 // por conversa; `travelId` entra no id da thread (não só no `resource`) para uma reutilização
 // acidental do mesmo `session_id` em outra viagem nunca colidir com uma thread já existente de
 // outro dono (thread não pode trocar de "owner"/resource depois de criada).
-export async function askOri(tenantId: string, travelId: string, userId: string, sessionId: string, prompt: string): Promise<OriResult> {
+export async function askOri(tenantId: string, travelId: string, userId: string, sessionId: string, prompt: string): Promise<OriResponse> {
   const [vouchers, tripContext] = await Promise.all([getVoucherSummaries(tenantId, travelId), getTravelSummary(tenantId, travelId)]);
 
-  const { object } = await oriAgent.generate(prompt, {
+  const { object, toolCalls } = await oriAgent.generate(prompt, {
     instructions: buildOriInstructions(vouchers, tripContext),
     memory: {
       thread: `${travelId}:${sessionId}`,
@@ -80,5 +94,12 @@ export async function askOri(tenantId: string, travelId: string, userId: string,
       ['user_id', userId],
     ]),
   });
-  return object;
+
+  // `updated_data`: calculado aqui, não pela LLM — ver `WRITE_TOOL_IDS` acima. `true` só diz que
+  // ALGUMA tool de escrita rodou nesta resposta (o front sabe que está desatualizado), não o quê
+  // mudou especificamente; quem decidir usar esse sinal pra atualizar a tela precisa rebuscar o
+  // dado (voucher/dia a dia/contexto/sugestões) por fora, não inferir a partir daqui.
+  const updatedData = toolCalls.some((call) => WRITE_TOOL_IDS.has(call.payload.toolName));
+
+  return { ...object, updated_data: updatedData };
 }
