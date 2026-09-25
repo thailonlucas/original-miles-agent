@@ -1,10 +1,9 @@
-import { rebuildDailySchedule, updateDailyScheduleForVoucher } from '../../daily-schedule/rebuild-daily-schedule';
+import { removeVoucherFromDailySchedule, updateDailyScheduleForVoucher } from '../../daily-schedule/rebuild-daily-schedule';
 import type { VoucherSummary } from '../../../services/travel-db';
 
-// Mesmos gatilhos fire-and-forget de `routes/voucher-routes.ts` (criar/editar voucher -> update
-// incremental; excluir voucher -> rebuild completo), reusados aqui pelas tools de criar/atualizar/
-// excluir do agente Ori — manter o daily_schedule reagindo a QUALQUER mudança de voucher, não só
-// às feitas pelo pipeline de extração automática.
+// Mesmos gatilhos fire-and-forget de `routes/voucher-routes.ts` (criar/editar voucher -> regera os
+// eventos dele; excluir -> remove os eventos dele), reusados pelas tools de voucher do Ori — o
+// daily_schedule reage a QUALQUER mudança de voucher, não só às do pipeline de extração.
 //
 // Usa `console.error` (não `helpers/logger.ts`) de propósito: este arquivo é importado pelas
 // tools do agente (`ori-agent.ts` -> bundle do Mastra), e `logger.ts` importa `mastra-instance.ts`
@@ -18,8 +17,8 @@ export function triggerDailyScheduleUpdate(tenantId: string, travelId: string, v
   );
 }
 
-export function triggerDailyScheduleRebuild(tenantId: string, travelId: string, userId: string): void {
-  void rebuildDailySchedule(tenantId, travelId, userId).catch((error) =>
-    console.error(`[Ori] falha ao reconstruir daily_schedule da viagem ${travelId}`, error),
+export function triggerDailyScheduleRemoval(tenantId: string, travelId: string, voucherId: string, userId: string): void {
+  void removeVoucherFromDailySchedule(tenantId, travelId, voucherId, userId).catch((error) =>
+    console.error(`[Ori] falha ao remover voucher ${voucherId} do daily_schedule da viagem ${travelId}`, error),
   );
 }

@@ -4,143 +4,99 @@ Leia este arquivo antes de alterar qualquer coisa nesta pasta.
 
 ## Objetivo
 
-Monta/atualiza o roteiro dia a dia de uma viagem (`travel.daily_schedule`, jsonb + `travel.travel_start_at`/`travel_end_at`, date) a partir dos vouchers já extraídos — um objeto por dia com evento, com eventos separados em manhã/tarde/noite. Substitui o agente equivalente hoje em n8n (`travel_agent/generate_itinerary` / `travel_agent/daily-schedule`).
+Mantém o dia a dia (roteiro) de uma viagem — `travel.daily_schedule` (jsonb) + `travel_start_at`/
+`travel_end_at` — a partir dos vouchers extraídos: um item por dia com evento, eventos separados em
+manhã/tarde/noite.
 
-**Reativo, não sob comando**: roda automaticamente depois de CADA voucher extraído ou excluído
-(`routes/voucher-routes.ts`), nunca por uma chamada manual do usuário.
+## Regra central: a LLM só gera eventos de voucher, o código decide o resto
 
-## Como o agente vê os vouchers: lista leve + tool `openVoucher`
+Todo evento gravado tem `source` (`schema.ts` → `dailyScheduleEventSourceSchema`):
 
-O agente **nunca** recebe `ai_extracted_data` de todos os vouchers de uma vez no prompt. Recebe só
-uma lista leve (`getVoucherSummaries`, `services/travel-db.ts`): `{ id, voucher_type_slug, title,
-content }` por voucher — sem os dados extraídos completos. Antes de escrever qualquer evento, o
-agente chama a tool `openVoucher` (`tools/open-voucher-tool.ts`) com o `id` do voucher pra abrir o
-`ai_extracted_data` completo daquele voucher específico. `tenant_id` da tool vem do
-`requestContext`, nunca de um argumento que o model preenche — evita um voucher de outro tenant
-vazar por um id errado/adivinhado.
+- `{ type: 'voucher', voucher_id }` — gerado pela LLM a partir de um voucher.
+- `{ type: 'suggestion', suggestion_id }` — sugestão aprovada (`applySuggestionDecision`,
+  `createDecidedSuggestion`, fora desta pasta).
+- `{ type: 'chat' }` — evento que o consultor pediu ao Ori no chat (tool `adicionarEventoDiaADia`).
+- `{ type: 'manual' }` — evento criado pelo app (`POST /travel_agent/daily-schedule/event`).
 
-Isso espelha o fluxo original em n8n (tool "Busca documento", um voucher por vez) — a diferença é
-que aqui o agente decide sozinho quais abrir (sem loop por dia dirigido de fora), guiado pela lista
-leve + as instructions (`prompts/system-prompt.ts`).
+Edições de UM evento (adicionar/alterar/mover/remover) são escritas diretas em `services/travel-db.ts`
+(`insertDailyScheduleEvent`, `updateDailyScheduleEvent`, `removeDailyScheduleEvent`) — sem LLM,
+usadas pelas rotas de `routes/daily-schedule-event-routes.ts` (o kanban do front edita, move e
+exclui por elas) e pelas tools do Ori.
 
-## Dois modos — incremental (padrão) vs rebuild completo
+Sugestões aprovadas ANTES de aprovar passar a criar o evento ficaram só como "sugestão aprovada",
+fora da cronologia. `scripts/backfill-approved-suggestions.ts` (simula por padrão; `--apply` grava;
+`--travel=<id>` pra uma viagem só) as transforma em eventos com `source: suggestion` — a origem
+continua visível no kanban (selo "Sugestão aprovada"). Duplicada (mesmo título no mesmo dia/período)
+não vira outro evento; a sugestão repetida é apagada. Seguro rodar de novo.
 
-- **`updateDailyScheduleForVoucher`** (`rebuild-daily-schedule.ts`) — caminho padrão, chamado a
-  cada voucher **extraído**. Não reprocessa os outros vouchers da viagem: passa a lista leve de
-  todos os vouchers + o estado atual do roteiro (`daily_schedule`/`travel_start_at`/`travel_end_at`,
-  já resumidos) + qual é o voucher novo, e deixa o agente decidir o que abrir e atualizar
-  (`applyVoucherToDailySchedule`). Mais rápido/barato que reprocessar tudo — viabiliza "reativo com
-  o menor tempo possível" mesmo em viagens com muitos vouchers.
-- **`rebuildDailySchedule`** (mesmo arquivo) — reconstrói TUDO do zero: passa a lista leve de TODOS
-  os vouchers, sem estado anterior (`buildDailyScheduleFromScratch`). Usado só quando um voucher é
-  **excluído** — remover a contribuição de um voucher específico de um roteiro já montado
-  incrementalmente não é confiável (não dá pra saber com segurança quais pedaços do roteiro atual
-  vieram só daquele voucher), então é mais simples/correto recomeçar do zero com os vouchers que
-  sobraram.
+Sugestão aprovada e o evento dela existem ou somem juntos: excluir o evento
+(`removeDailyScheduleEvent`) apaga a sugestão, e apagar a sugestão (`removeSuggestion`) tira o
+evento. Sem isso, uma sugestão "aprovada" sem evento voltava a aparecer como card no kanban.
 
-Os dois modos chamam o mesmo `dailyScheduleAgent` (`daily-schedule-agent.ts`), só com
-instructions/mensagem diferentes, e devolvem o mesmo formato de saída: `{ schedule,
-travel_start_at, travel_end_at }` (`schema.ts` → `dailyScheduleUpdateSchema`).
+A LLM nunca vê nem escreve `source`: ela devolve eventos com `voucher_id`
+(`voucherScheduleResultSchema`) e `schedule-merge.ts` converte, junta e remove. Por isso nenhuma
+reconstrução a partir de vouchers pode apagar uma sugestão aprovada ou um evento manual — o código
+só mexe em eventos `voucher`.
 
-## Terceiro modo — geração sob demanda (`POST /travel_agent/daily-schedule`)
+## Os três pontos de entrada
 
-Diferente dos dois modos acima (reativos, disparados pela rota de voucher), este é chamado
-diretamente por HTTP (`routes/daily-schedule-routes.ts`), recebendo `travel_id` + `session_id` no
-body. Usado pra (re)gerar o roteiro sob demanda, não a cada voucher.
+Todos dentro de `withTravelScheduleLock` (serializa escritas da mesma viagem, ver
+`services/travel-db.ts`).
 
-- Autenticação igual a `routes/voucher-routes.ts`: `requiresAuth: false` na rota + o próprio
-  handler valida o access_token do Supabase Auth do usuário (`Authorization: Bearer`) e resolve o
-  tenant por e-mail (`getTenantIdByEmail`). Como `travel_id` sozinho não escopa por tenant, a rota
-  ainda confere que a viagem pertence a esse tenant (`getTenantIdByTravelId`) antes de gerar/gravar
-  qualquer coisa — devolve 404 se não bater.
-- `generateDailySchedule(tenantId, travelId)` (`generate-daily-schedule.ts`) — mesmo
-  `withTravelScheduleLock` e mesma lista leve de vouchers (`getVoucherSummaries`, filtrando
-  `travel_insurance` via `isRelevant`, exportado de `rebuild-daily-schedule.ts`) dos outros dois
-  modos, mas chama `generateDailyScheduleReport` (`daily-schedule-agent.ts`), que usa um
-  `structuredOutput` PRÓPRIO (`dailyScheduleGenerateResultSchema`, `schema.ts`):
-  `{ response, analysed_doc_ids }` em vez de `{ schedule, travel_start_at, travel_end_at }`.
-- `response` é o array de dias **serializado como string JSON** (não objeto aninhado) — a rota faz
-  `JSON.parse` + `dailyScheduleSchema.parse` antes de gravar, e deriva `travel_start_at`/
-  `travel_end_at` do primeiro/último item do array (não vêm mais como campos separados do model).
-- Ao contrário dos outros dois modos (array **esparso**, só dias com evento — ver seção abaixo),
-  este gera um array **denso**: um item por dia entre o primeiro e o último dia do itinerário,
-  mesmo sem evento (`title: "Em [cidade]"` nesse caso). Ambos usam o mesmo formato de dia por
-  baixo (`dailyScheduleDaySchema`), então são compatíveis com quem lê `daily_schedule` depois —
-  só divergem em terem ou não dias "vazios" no array.
-- Reusa o mesmo `dailyScheduleAgent`/tool `openVoucher` dos outros modos (`instructions` e
-  `structuredOutput` sobrescritos por chamada, ver `buildGenerateInstructions`/
-  `buildGenerateUserMessage` em `prompts/system-prompt.ts`), não um agente separado.
-- `analysed_doc_ids` vem do próprio model (lista dos ids que ele abriu com `openVoucher`) — não é
-  validado/reconciliado contra o que a tool de fato retornou.
+- **Voucher criado ou atualizado** — `updateDailyScheduleForVoucher` (`rebuild-daily-schedule.ts`),
+  disparado por `routes/voucher-routes.ts` e pelas tools de voucher do Ori. Tira os eventos antigos
+  daquele voucher (`withoutVoucher`) e pede à LLM só os eventos DELE (`buildVoucherEvents`), com o
+  resto do dia a dia como contexto só de leitura. Os outros vouchers não passam pela LLM de novo.
+- **Voucher excluído** — `removeVoucherFromDailySchedule`: só remove os eventos daquele
+  `voucher_id`. **Sem chamada de IA.**
+- **Gerar sob demanda** — `generateDailySchedule` (`generate-daily-schedule.ts`): refaz TODOS os
+  eventos de voucher do zero (`buildVoucherSchedule`) e junta as sugestões/eventos manuais que já
+  existiam. Única função usada pela rota `POST /travel_agent/daily-schedule` (botão do front) e pela
+  tool `gerarDiaADia` do Ori. Devolve `{ days, response, analysedDocIds }` — `response` é o array
+  serializado (contrato que o front já espera); `analysedDocIds` vem das tool calls de
+  `openVoucher` de verdade, não de uma lista preenchida pela LLM.
 
-## Por que `travel_start_at`/`travel_end_at` em vez de dias vazios no array
+**Linhas antigas** (gravadas antes de `source` existir): `hasUntaggedEvents` detecta eventos sem
+origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de voucher do zero uma vez
+(`rebuildVoucherEvents`). Eventos antigos com `suggested: true` contam como sugestão (mantidos).
 
-`daily_schedule` é um array **esparso** — só entram dias que têm pelo menos um evento.
-`travel_start_at`/`travel_end_at` (colunas `date` em `travel`) guardam o range conhecido da viagem
-— atualizadas a cada chamada (incremental ou rebuild) se o voucher aberto tiver uma data mais
-cedo/mais tarde que o range atual. Quem consome o roteiro trata qualquer dia entre
-`travel_start_at` e `travel_end_at` que não apareça no array como um dia sem evento.
+## Formato gravado
 
-## Concorrência (race condition entre vouchers extraídos ao mesmo tempo)
+- Array **esparso**: só dias com pelo menos um evento. O front preenche os dias vazios entre o
+  primeiro e o último ("Dia livre", `fillDailyScheduleGaps` no front), então o kanban continua
+  mostrando a viagem inteira.
+- `travel_start_at`/`travel_end_at` = primeiro e último dia com evento (`scheduleRange`),
+  recalculados a cada escrita — encolhem quando um voucher sai.
+- A ordem dos eventos dentro de um período é a cronologia (eventos não têm horário estruturado).
+  `updateDailyScheduleEvent` aceita `newIndex` (posição final no período de destino) — é o que o
+  drag-and-drop do kanban usa pra soltar um card entre dois outros, e o Ori pra "colocar o cinema
+  depois do jantar". Sem `newIndex`, um move vai pro fim do período.
+- Um evento por voucher: se dois vouchers descrevem o mesmo acontecimento (ex: o mesmo voo), cada um
+  tem o seu evento, com `observation` apontando o outro. Assim excluir um voucher nunca leva junto
+  informação que veio de outro.
 
-Tanto o update incremental quanto o rebuild completo fazem leitura+escrita do estado da viagem —
-sem proteção, dois vouchers da mesma viagem terminando de extrair quase ao mesmo tempo poderiam
-disparar duas chamadas concorrentes, e a mais lenta (que leu o estado *antes* da mais rápida
-escrever) sobrescreveria o resultado mais completo com uma foto desatualizada.
+## Tradeoffs conhecidos
 
-`withTravelScheduleLock` (`services/travel-db.ts`) resolve isso com `pg_advisory_xact_lock` por
-`travelId` (hash): serializa as chamadas da MESMA viagem (viagens diferentes nunca se bloqueiam
-entre si) — cada chamada só começa a ler o estado depois que a anterior daquela viagem já
-commitou, então sempre parte do estado mais atual. Isso garante que a ÚLTIMA extração/exclusão de
-uma sequência sempre resulta no roteiro mais completo, mesmo sob concorrência.
-
-**Tradeoff conhecido**: a conexão fica presa (dentro de uma transação) durante toda a chamada de
-IA (incluindo as chamadas de tool), não só durante o read/write. Aceitável pro volume atual (pool
-pequeno, poucos vouchers por vez); revisitar se isso virar gargalo (ver comentário em
-`withTravelScheduleLock`).
-
-**Risco conhecido do modo incremental**: como cada chamada só abre (via tool) o que julgar
-necessário, não TODOS os vouchers antigos, há um risco teórico de deriva ao longo de muitas
-atualizações sucessivas (ex: um detalhe que só apareceria abrindo dois vouchers antigos lado a lado
-pode não ser reconciliado se nenhum dos dois for reaberto numa atualização futura). Mitigado por
-sempre reenviar/reescrever o roteiro completo a cada chamada (nunca um diff/patch) e por a lista
-completa de vouchers (não só o novo) sempre ir no prompt, dando ao agente a opção de abrir um
-voucher antigo se perceber que precisa. Não é uma garantia matemática de equivalência ao rebuild
-completo — se isso virar problema na prática, a saída é rodar `rebuildDailySchedule` periodicamente
-ou sob demanda, não só na exclusão.
+- Editar título/conteúdo ou mover um evento de voucher (`updateDailyScheduleEvent`) mantém a origem
+  `voucher` — se aquele voucher for atualizado ou o dia a dia for regenerado, os eventos dele são
+  refeitos a partir do voucher e a edição se perde. Edições em eventos de OUTROS vouchers, sugestões
+  e eventos manuais sobrevivem.
+- A conexão fica presa na transação durante a chamada de IA (lock). Aceitável pro volume atual.
 
 ## Arquivos desta pasta
 
-- `daily-schedule-agent.ts` — `Agent` com instructions placeholder (a de verdade é montada por
-  chamada) + tool `openVoucher` + `structuredOutput` (`schema.ts`). Exporta
-  `buildDailyScheduleFromScratch(vouchers, tenantId)` (rebuild) e
-  `applyVoucherToDailySchedule(currentState, vouchers, newVoucherId, tenantId)` (incremental).
-- `schema.ts` — `dailyScheduleUpdateSchema`: `{ schedule, travel_start_at, travel_end_at }`, onde
-  `schedule` é o array esparso de dias (`dailyScheduleSchema`), cada dia com `events: { morning,
-  afternoon, night }` e cada evento `{ title, content, type, observation }`.
-- `prompts/system-prompt.ts` — instructions + mensagem do usuário separadas pros dois modos
-  (`buildRebuildInstructions`/`buildRebuildUserMessage` e
-  `buildIncrementalInstructions`/`buildIncrementalUserMessage`), compartilhando as regras de
-  negócio comuns (`COMMON_RULES`: exclusão de `travel_insurance`, condição pro tipo `other`, uso
-  obrigatório da tool antes de escrever um evento, período do dia por horário, nunca inventar
-  dado, nunca duplicar evento, etc.).
-- `tools/open-voucher-tool.ts` — `openVoucherTool`: abre `ai_extracted_data` de um voucher por id
-  (`getVoucherExtractedData`, `services/travel-db.ts`), tenant do `requestContext`.
-- `rebuild-daily-schedule.ts` — `updateDailyScheduleForVoucher` e `rebuildDailySchedule`, os dois
-  pontos de entrada chamados pela rota (`routes/voucher-routes.ts`); exporta também `isRelevant`
-  (filtro de `travel_insurance`), reusado por `generate-daily-schedule.ts`.
-- `generate-daily-schedule.ts` — `generateDailySchedule(tenantId, travelId)`, ponto de entrada do
-  terceiro modo (geração sob demanda), chamado por `routes/daily-schedule-routes.ts`.
-
-## Notas de desenvolvimento
-
-- Modelo `openai/gpt-4.1` (não o `-mini`) nos dois modos — montar/atualizar o roteiro exige mais
-  raciocínio (decidir o que abrir, casar datas de vouchers de tipos diferentes, evitar duplicar o
-  mesmo evento em dias sucessivos) do que classificação/extração isolada.
-- Sem vouchers relevantes (viagem vazia ou só com `travel_insurance`), `rebuildDailySchedule` zera
-  `daily_schedule`/`travel_start_at`/`travel_end_at` sem gastar chamada de IA.
-- `updateDailyScheduleForVoucher` pula silenciosamente (sem chamar o agente) vouchers do tipo
-  `travel_insurance` — mesma exclusão de `EXCLUDED_VOUCHER_TYPES`, aplicada antes mesmo de entrar
-  no lock.
-- Ambas as funções são sempre disparadas em background (fire-and-forget) pela rota que cria/apaga
-  o voucher — a resposta HTTP não espera o roteiro terminar de ser atualizado/reconstruído.
+- `schema.ts` — formato gravado (`dailyScheduleSchema`, com `source`) e formato da LLM
+  (`voucherScheduleResultSchema`, com `voucher_id`).
+- `event-format.ts` — formato único de `title`/`content`/`type` de um evento, usado pelo gerador, pelas
+  sugestões (`agents/schedule-suggestion/`) e pelas tools do Ori que incluem/alteram eventos — um evento
+  gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara. Mude o formato só aqui.
+- `schedule-merge.ts` — funções puras de junção (`withoutVoucher`, `keptEventsOnly`, `mergeDays`,
+  `toStoredDays`, `insertEventIntoDays`, `scheduleRange`, `hasUntaggedEvents`).
+- `daily-schedule-agent.ts` — o `Agent` + `buildVoucherSchedule` (do zero) e `buildVoucherEvents`
+  (um voucher).
+- `prompts/system-prompt.ts` — instructions/mensagem dos dois modos, com as regras comuns
+  (`COMMON_RULES`).
+- `rebuild-daily-schedule.ts` — `updateDailyScheduleForVoucher`, `removeVoucherFromDailySchedule`,
+  `rebuildVoucherEvents`, `isRelevant` (filtro de `travel_insurance`, aplicado em código).
+- `generate-daily-schedule.ts` — `generateDailySchedule`.
+- `tools/open-voucher-tool.ts` — abre `ai_extracted_data` de um voucher (tenant via `requestContext`).

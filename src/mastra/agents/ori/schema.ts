@@ -19,6 +19,25 @@ export type OriResult = z.infer<typeof oriResultSchema>;
 // `WRITE_TOOL_IDS` lá). `true` só diz "alguma coisa mudou, o front pode estar desatualizado" — não
 // diz o quê; é um sinal pra disparar um refresh (ex: rebuscar voucher/dia a dia/sugestões), não um
 // diff do que mudou.
+//
+// `pending_approval`: presente só quando a geração pausou numa tool marcada `requireApproval: true`
+// (ver `decidirSugestao`/`adicionarSugestaoAoDiaADia`, `tools/`) — o Mastra intercepta a chamada
+// ANTES do `execute()` rodar. Quando presente, `response` já vem com uma pergunta de confirmação
+// pro consultor (montada em código, não pela LLM — ver `describePendingApproval` em
+// `ori-agent.ts`), `analysed_doc_ids` vem vazio e `updated_data` vem `false` (nada foi escrito
+// ainda). O front resolve a pausa chamando `POST /travel_agent/ori/approval` com `run_id`/
+// `tool_call_id` e a decisão — ver `routes/ori-routes.ts`.
+export interface PendingApproval {
+  run_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  args: Record<string, unknown>;
+  // Pergunta de confirmação montada em código (o QUÊ vai ser feito). Separada de `response`, que
+  // traz o que o próprio agente escreveu antes de chamar a tool (quando escreveu algo).
+  question: string;
+}
+
 export interface OriResponse extends OriResult {
   updated_data: boolean;
+  pending_approval?: PendingApproval;
 }

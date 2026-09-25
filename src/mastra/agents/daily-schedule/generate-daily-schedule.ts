@@ -1,32 +1,22 @@
-import { getTravelSummary, getVoucherSummaries, saveTravelSchedule, withTravelScheduleLock } from '../../services/travel-db';
-import { generateDailyScheduleReport } from './daily-schedule-agent';
-import { isRelevant } from './rebuild-daily-schedule';
-import { dailyScheduleSchema } from './schema';
+import { withTravelScheduleLock } from '../../services/travel-db';
+import { readScheduleDays, rebuildVoucherEvents, saveScheduleDays } from './rebuild-daily-schedule';
+import type { DailyScheduleDay } from './schema';
 
 export interface DailyScheduleGeneration {
+  days: DailyScheduleDay[];
+  // Mesmo array serializado, no contrato que o front já espera de `POST /travel_agent/daily-schedule`.
   response: string;
   analysedDocIds: string[];
 }
 
-// Usado só pelo endpoint `POST /travel_agent/daily-schedule` — gera o roteiro do ZERO (como
-// `rebuildDailySchedule`), mas com o prompt/schema de `generateDailyScheduleReport` (roteiro DENSO,
-// um dia por item entre o primeiro e o último da viagem, dentro de um envelope { response,
-// analysed_doc_ids }). `travel_start_at`/`travel_end_at` são derivados aqui do primeiro/último item
-// do array retornado, já que esse fluxo não pede essas datas separadamente ao model.
+// Regenera o dia a dia sob demanda: refaz todos os eventos de voucher do zero, mantendo sugestões
+// aprovadas e eventos manuais. Única função usada tanto pela rota `POST
+// /travel_agent/daily-schedule` quanto pela tool `gerarDiaADia` do Ori.
 export async function generateDailySchedule(tenantId: string, travelId: string, userId: string): Promise<DailyScheduleGeneration> {
   return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
-    const [vouchers, summary] = await Promise.all([
-      getVoucherSummaries(tenantId, travelId, client).then((all) => all.filter(isRelevant)),
-      getTravelSummary(tenantId, travelId, client),
-    ]);
-    const { response, analysed_doc_ids: analysedDocIds } = await generateDailyScheduleReport(vouchers, tenantId, summary);
-
-    const schedule = dailyScheduleSchema.parse(JSON.parse(response));
-    const travelStartAt = schedule[0]?.date ?? null;
-    const travelEndAt = schedule[schedule.length - 1]?.date ?? null;
-
-    await saveTravelSchedule(tenantId, travelId, { dailySchedule: schedule, travelStartAt, travelEndAt }, client);
-
-    return { response, analysedDocIds };
+    const currentDays = await readScheduleDays(tenantId, travelId, client);
+    const { days, openedVoucherIds } = await rebuildVoucherEvents(tenantId, travelId, currentDays, client);
+    await saveScheduleDays(tenantId, travelId, days, client);
+    return { days, response: JSON.stringify(days), analysedDocIds: openedVoucherIds };
   });
 }

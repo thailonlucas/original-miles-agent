@@ -1,7 +1,7 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
 import { extractVoucher, extractVoucherFromText } from '../agents/voucher-extractor/voucher-extractor';
-import { rebuildDailySchedule, updateDailyScheduleForVoucher } from '../agents/daily-schedule/rebuild-daily-schedule';
+import { removeVoucherFromDailySchedule, updateDailyScheduleForVoucher } from '../agents/daily-schedule/rebuild-daily-schedule';
 import {
   insertVoucher,
   deleteVoucher,
@@ -16,21 +16,17 @@ import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from
 import { logConversationError } from '../helpers/logger';
 import { parseOrBadRequest } from './validate';
 
-// Ambas disparam em background — a resposta HTTP não espera o roteiro terminar de ser
-// atualizado/reconstruído (ver AGENTS.md de `agents/daily-schedule/`).
-//
-// Criar voucher -> update incremental (não reprocessa os outros vouchers da viagem). Excluir
-// voucher -> rebuild completo (remover a contribuição de só um voucher de um roteiro montado
-// incrementalmente não é confiável — ver comentário em `rebuildDailySchedule`).
+// Ambas disparam em background — a resposta HTTP não espera o dia a dia terminar de atualizar.
+// Criar/editar voucher -> regera só os eventos dele. Excluir -> só remove os eventos dele (sem IA).
 function triggerDailyScheduleUpdate(tenantId: string, travelId: string, voucher: VoucherSummary, userId: string): void {
   void updateDailyScheduleForVoucher(tenantId, travelId, voucher, userId).catch((error) =>
     logConversationError(travelId, 'falha ao atualizar daily_schedule', error),
   );
 }
 
-function triggerDailyScheduleRebuild(tenantId: string, travelId: string, userId: string): void {
-  void rebuildDailySchedule(tenantId, travelId, userId).catch((error) =>
-    logConversationError(travelId, 'falha ao reconstruir daily_schedule', error),
+function triggerDailyScheduleRemoval(tenantId: string, travelId: string, voucherId: string, userId: string): void {
+  void removeVoucherFromDailySchedule(tenantId, travelId, voucherId, userId).catch((error) =>
+    logConversationError(travelId, `falha ao remover voucher ${voucherId} do daily_schedule`, error),
   );
 }
 
@@ -175,7 +171,7 @@ export const voucherDeleteRoute = registerApiRoute('/travel_agent/extract/vouche
   requiresAuth: false,
   openapi: {
     summary: 'Exclui um voucher e reconstrói o roteiro dia a dia da viagem',
-    description: 'Form fields: `travel_id`, `id`. Depois de excluir, dispara `rebuildDailySchedule` em background (mesmo gatilho da extração).',
+    description: 'Form fields: `travel_id`, `id`. Depois de excluir, remove em background os eventos desse voucher do dia a dia.',
     tags: ['Vouchers'],
   },
   handler: async (c) => {
@@ -206,7 +202,7 @@ export const voucherDeleteRoute = registerApiRoute('/travel_agent/extract/vouche
       return c.json({ error: 'not_found', message: `Voucher ${voucherId} não encontrado para a viagem ${travelId}.` }, 404);
     }
 
-    triggerDailyScheduleRebuild(tenantId, travelId, userId);
+    triggerDailyScheduleRemoval(tenantId, travelId, voucherId, userId);
     return c.json({ deleted: true }, 200);
   },
 });

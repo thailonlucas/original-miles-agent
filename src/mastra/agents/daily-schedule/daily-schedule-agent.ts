@@ -1,83 +1,68 @@
 import { Agent } from '@mastra/core/agent';
 import { RequestContext } from '@mastra/core/request-context';
-import type { TravelScheduleState, VoucherSummary } from '../../services/travel-db';
+import type { VoucherSummary } from '../../services/travel-db';
 import {
-  buildGenerateInstructions,
-  buildGenerateUserMessage,
-  buildIncrementalInstructions,
-  buildIncrementalUserMessage,
-  buildRebuildInstructions,
-  buildRebuildUserMessage,
+  buildForVoucherInstructions,
+  buildForVoucherUserMessage,
+  buildFromScratchInstructions,
+  buildFromScratchUserMessage,
 } from './prompts/system-prompt';
-import { dailyScheduleGenerateResultSchema, dailyScheduleUpdateSchema, type DailyScheduleGenerateResult, type DailyScheduleUpdate } from './schema';
+import { toStoredDays } from './schedule-merge';
+import { voucherScheduleResultSchema, type DailyScheduleDay } from './schema';
 import { openVoucherTool } from './tools/open-voucher-tool';
 
-// Instructions reais são montadas por chamada (rebuild vs update incremental, ver funções abaixo)
-// — mesmo padrão de `agents/tags/tags-agent.ts` antes de ser removido. A lista de vouchers (só
-// id/tipo/título/resumo) vai na mensagem do usuário, não aqui — os dados completos de cada voucher
-// só entram via a tool `openVoucher`, chamada pelo próprio agente sob demanda.
+// Só gera eventos de voucher. Juntar com sugestões aprovadas/eventos manuais, remover eventos de um
+// voucher excluído e calcular o range da viagem é trabalho do código (`schedule-merge.ts`,
+// `rebuild-daily-schedule.ts`), não da LLM.
 export const dailyScheduleAgent = new Agent({
   id: 'daily-schedule',
   name: 'Daily Schedule',
-  description: 'Monta/atualiza o roteiro dia a dia de uma viagem (manhã/tarde/noite) a partir dos vouchers já extraídos.',
+  description: 'Gera os eventos do dia a dia de uma viagem (manhã/tarde/noite) a partir dos vouchers já extraídos.',
   instructions: 'Aguardando a lista de vouchers da viagem.',
   model: 'openai/gpt-5.6-terra',
   tools: { openVoucher: openVoucherTool },
   defaultOptions: {
-    // Default do Mastra é baixo demais pra uma viagem com muitos vouchers — cada voucher relevante
-    // pode custar 1 chamada de "openVoucher", e ainda sobra pelo menos 1 passo pra escrever a saída
-    // estruturada. Sem isso, viagens com >~10 vouchers cortavam a rodada de tool calls antes do
-    // agente abrir tudo que precisava, produzindo roteiro incompleto (dias sumindo, datas erradas).
+    // Cada voucher relevante pode custar 1 chamada de "openVoucher", e ainda sobra passo pra
+    // escrever a saída — com o default do Mastra, viagens com >~10 vouchers ficavam incompletas.
     maxSteps: 40,
-    structuredOutput: {
-      schema: dailyScheduleUpdateSchema,
-    },
+    structuredOutput: { schema: voucherScheduleResultSchema },
   },
 });
 
-// Reconstrói o roteiro do zero a partir de TODOS os vouchers fornecidos — usado quando não dá pra
-// fazer incremental (hoje, só depois de excluir um voucher, ver `rebuild-daily-schedule.ts`).
-export async function buildDailyScheduleFromScratch(
-  vouchers: VoucherSummary[],
-  tenantId: string,
-  summary: string | null = null,
-): Promise<DailyScheduleUpdate> {
-  const { object } = await dailyScheduleAgent.generate(buildRebuildUserMessage(vouchers, summary), {
-    instructions: buildRebuildInstructions(),
-    requestContext: new RequestContext([['tenant_id', tenantId]]),
-  });
-  return object;
+// Ids que o agente de fato abriu, lidos das tool calls — não pedidos à LLM (que poderia listar um
+// id que não abriu).
+function openedVoucherIds(toolCalls: { payload: { toolName: string; args?: unknown } }[]): string[] {
+  const ids = toolCalls
+    .filter((call) => call.payload.toolName === openVoucherTool.id)
+    .map((call) => (call.payload.args as { voucherId?: unknown } | undefined)?.voucherId)
+    .filter((id): id is string => typeof id === 'string');
+  return [...new Set(ids)];
 }
 
-// Aplica só o que UM voucher novo muda no roteiro já existente — caminho padrão a cada voucher
-// extraído (mais barato/rápido que reprocessar tudo).
-export async function applyVoucherToDailySchedule(
-  currentState: TravelScheduleState,
+export async function buildVoucherSchedule(
   vouchers: VoucherSummary[],
-  newVoucherId: string,
   tenantId: string,
-  summary: string | null = null,
-): Promise<DailyScheduleUpdate> {
-  const { object } = await dailyScheduleAgent.generate(buildIncrementalUserMessage(currentState, vouchers, newVoucherId, summary), {
-    instructions: buildIncrementalInstructions(),
+  summary: string | null,
+): Promise<{ days: DailyScheduleDay[]; openedVoucherIds: string[] }> {
+  const { object, toolCalls } = await dailyScheduleAgent.generate(buildFromScratchUserMessage(vouchers, summary), {
+    instructions: buildFromScratchInstructions(),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
   });
-  return object;
+  return { days: toStoredDays(object.days), openedVoucherIds: openedVoucherIds(toolCalls) };
 }
 
-// Usado só pelo endpoint `POST /travel_agent/daily-schedule` (ver `generate-daily-schedule.ts`) —
-// mesmo agente/tool das funções acima ("openVoucher"), mas com um schema de saída próprio desse
-// fluxo (envelope { response, analysed_doc_ids }, ver `schema.ts`), por isso o override de
-// `structuredOutput` por chamada em vez de usar o `defaultOptions` do agente.
-export async function generateDailyScheduleReport(
+// `currentDays` já vem SEM os eventos deste voucher — é só contexto pro agente não repetir o que
+// existe e acertar o título dos dias que ele tocar.
+export async function buildVoucherEvents(
+  voucherId: string,
+  currentDays: DailyScheduleDay[],
   vouchers: VoucherSummary[],
   tenantId: string,
-  summary: string | null = null,
-): Promise<DailyScheduleGenerateResult> {
-  const { object } = await dailyScheduleAgent.generate(buildGenerateUserMessage(vouchers, summary), {
-    instructions: buildGenerateInstructions(),
-    structuredOutput: { schema: dailyScheduleGenerateResultSchema },
+  summary: string | null,
+): Promise<DailyScheduleDay[]> {
+  const { object } = await dailyScheduleAgent.generate(buildForVoucherUserMessage(currentDays, vouchers, voucherId, summary), {
+    instructions: buildForVoucherInstructions(),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
   });
-  return object;
+  return toStoredDays(object.days, voucherId);
 }

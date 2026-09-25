@@ -2,20 +2,28 @@ import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
 import { applySuggestionDecision } from '../agents/schedule-suggestion/apply-suggestion-decision';
 import { schedulePeriodSchema } from '../agents/schedule-suggestion/schema';
-import { deleteSuggestion, getSuggestions, getTenantIdByEmail, getTenantIdByTravelId, moveSuggestion } from '../services/travel-db';
+import {
+  createPendingSuggestion,
+  getSuggestions,
+  getTenantIdByEmail,
+  getTenantIdByTravelId,
+  moveSuggestion,
+  removeSuggestion,
+  updatePendingSuggestion,
+} from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { logConversationError } from '../helpers/logger';
 import { parseOrBadRequest } from './validate';
 
 // Mesmo contrato de autenticação das outras rotas de travel_agent/* (ver `voucher-routes.ts`).
-async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<string> {
+async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<{ tenantId: string; userId: string }> {
   const token = extractBearerToken(authorizationHeader);
   const user = await verifySupabaseAccessToken(token);
   const tenantId = await getTenantIdByEmail(user.email);
   if (!tenantId) {
     throw new UnauthorizedError(`Nenhum tenant encontrado para o e-mail "${user.email}" (tabela team).`);
   }
-  return tenantId;
+  return { tenantId, userId: user.id };
 }
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -33,7 +41,7 @@ export const scheduleSuggestionDecisionListRoute = registerApiRoute('/travel_age
   handler: async (c) => {
     let tenantId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -76,14 +84,16 @@ export const scheduleSuggestionDecisionRoute = registerApiRoute('/travel_agent/s
     description:
       'Recebe `travel_id`, `id` (da sugestão, devolvido por `POST /travel_agent/schedule-suggestion`) e `status` ' +
       '("approved"/"rejected"), mais `feedback` opcional. Só decide uma sugestão que ainda esteja "pending" — devolve 404 se o id ' +
-      'não existir ou já tiver sido decidido. Aprovar NÃO insere o evento em `travel.daily_schedule` — uma sugestão aprovada só vira ' +
-      'evento real do roteiro quando um voucher de verdade for extraído; até lá ela existe apenas como intenção registrada.',
+      'não existir ou já tiver sido decidido. Aprovar insere o evento dela em `travel.daily_schedule` (atomicamente, junto da ' +
+      'decisão) — o consultor/cliente aprovando pela tela é a confirmação de que aquela atividade entra no dia a dia de verdade, ' +
+      'mesmo sem um voucher por trás.',
     tags: ['Schedule Suggestion'],
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -101,7 +111,7 @@ export const scheduleSuggestionDecisionRoute = registerApiRoute('/travel_agent/s
     }
 
     try {
-      const decided = await applySuggestionDecision(tenantId, body.travel_id, {
+      const { decided } = await applySuggestionDecision(tenantId, body.travel_id, userId, {
         id: body.id,
         status: body.status,
         feedback: body.feedback?.trim() || null,
@@ -135,7 +145,7 @@ export const scheduleSuggestionMoveRoute = registerApiRoute('/travel_agent/sched
   handler: async (c) => {
     let tenantId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -167,13 +177,15 @@ export const scheduleSuggestionDeleteRoute = registerApiRoute('/travel_agent/sch
     summary: 'Remove uma sugestão do histórico por completo (qualquer status)',
     description:
       'Recebe `travel_id` e `id` via query string. Diferente de rejeitar: a sugestão some da "inteligência" da viagem também, não ' +
-      'fica registrada como rejeição — usado pro botão de apagar uma sugestão já aprovada na tela de histórico.',
+      'fica registrada como rejeição — usado pro botão de apagar uma sugestão na tela de histórico. Se ela já tinha sido ' +
+      'aprovada, o evento que ela virou no dia a dia sai junto. Mesma função da tool `removerSugestao` do Ori.',
     tags: ['Schedule Suggestion'],
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      tenantId = await resolveTenantId(c.req.header('Authorization'));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -195,10 +207,116 @@ export const scheduleSuggestionDeleteRoute = registerApiRoute('/travel_agent/sch
       return c.json({ error: 'not_found', message: `Viagem ${travelId} não encontrada.` }, 404);
     }
 
-    const removed = await deleteSuggestion(tenantId, travelId, id);
+    const removed = await removeSuggestion(tenantId, travelId, userId, id);
     if (!removed) {
       return c.json({ error: 'not_found', message: `Sugestão ${id} não encontrada.` }, 404);
     }
     return c.json({ removed: true }, 200);
+  },
+});
+
+const itemCreateBodySchema = z.object({
+  travel_id: z.string().min(1),
+  date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD'),
+  period: schedulePeriodSchema,
+  title: z.string().min(1),
+  content: z.string().default(''),
+  type: z.string().min(1).default('other'),
+  observation: z.string().nullable().default(null),
+  reason: z.string().nullable().default(null),
+});
+
+export const scheduleSuggestionItemCreateRoute = registerApiRoute('/travel_agent/schedule-suggestion/item', {
+  method: 'POST',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Cria UMA sugestão pendente (sem passar pelo gerador)',
+    description:
+      'Body JSON: `travel_id`, `date`, `period`, `title` e opcionalmente `content`/`type`/`observation`/`reason`. A sugestão entra ' +
+      'como "pending" no kanban, pra ser aprovada/rejeitada depois. Mesma função da tool `criarSugestao` do Ori.',
+    tags: ['Schedule Suggestion'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    let userId: string;
+    try {
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const body = parseOrBadRequest(itemCreateBodySchema, await c.req.json().catch(() => null), c);
+    if (body instanceof Response) return body;
+
+    const travelTenantId = await getTenantIdByTravelId(body.travel_id);
+    if (travelTenantId && travelTenantId !== tenantId) {
+      return c.json({ error: 'not_found', message: `Viagem ${body.travel_id} não encontrada.` }, 404);
+    }
+
+    const suggestion = await createPendingSuggestion(tenantId, body.travel_id, userId, {
+      date: body.date,
+      period: body.period,
+      event: { title: body.title, content: body.content, type: body.type, observation: body.observation },
+      reason: body.reason,
+    });
+    return c.json(suggestion, 201);
+  },
+});
+
+const itemUpdateBodySchema = z
+  .object({
+    travel_id: z.string().min(1),
+    id: z.string().min(1),
+    title: z.string().min(1).optional(),
+    content: z.string().optional(),
+    type: z.string().min(1).optional(),
+    reason: z.string().nullable().optional(),
+    date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').optional(),
+    period: schedulePeriodSchema.optional(),
+  })
+  .refine((b) => [b.title, b.content, b.type, b.reason, b.date, b.period].some((v) => v !== undefined), {
+    message: 'Informe ao menos um campo pra alterar.',
+  });
+
+export const scheduleSuggestionItemUpdateRoute = registerApiRoute('/travel_agent/schedule-suggestion/item', {
+  method: 'PATCH',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Altera texto e/ou dia/período de uma sugestão ainda pendente',
+    description:
+      'Body JSON: `travel_id`, `id` e os campos que mudam (`title`, `content`, `type`, `reason`, `date`, `period`). Só sugestões ' +
+      '"pending" — uma aprovada já é um evento do dia a dia (edite pelo `PATCH /travel_agent/daily-schedule/event`). 404 se o id não ' +
+      'existir ou já tiver sido decidido. Mesma função da tool `atualizarSugestao` do Ori.',
+    tags: ['Schedule Suggestion'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    let userId: string;
+    try {
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const body = parseOrBadRequest(itemUpdateBodySchema, await c.req.json().catch(() => null), c);
+    if (body instanceof Response) return body;
+
+    const travelTenantId = await getTenantIdByTravelId(body.travel_id);
+    if (travelTenantId && travelTenantId !== tenantId) {
+      return c.json({ error: 'not_found', message: `Viagem ${body.travel_id} não encontrada.` }, 404);
+    }
+
+    const { travel_id: travelId, id, ...patch } = body;
+    const updated = await updatePendingSuggestion(tenantId, travelId, userId, id, patch);
+    if (!updated) {
+      return c.json({ error: 'not_found', message: `Sugestão ${id} não encontrada ou já decidida.` }, 404);
+    }
+    return c.json(updated, 200);
   },
 });

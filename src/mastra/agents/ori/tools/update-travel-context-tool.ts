@@ -1,29 +1,25 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { saveTravelSummary } from '../../../services/travel-db';
-
-// Mesmo limite de `routes/travel-summary-routes.ts` (MAX_SUMMARY_LENGTH) — é o mesmo campo,
-// gravado pela mesma coluna (`travel.summary`).
-const MAX_SUMMARY_LENGTH = 4000;
+import { MAX_TRAVEL_SUMMARY_LENGTH, saveTravelSummary } from '../../../services/travel-db';
 
 // "Atualizar Contexto da Viagem" — cria/edita o resumo livre do campo "Contexto da Viagem" do
 // front (perfil do cliente, tipo de viagem, preferências etc.), mesma escrita da rota `PUT
 // /travel_agent/travel-summary` (`routes/travel-summary-routes.ts`), só que disparada pelo chat em
 // vez do app. `tenant_id`/`travel_id`/`user_id` vêm do `requestContext`, mesmo contrato das outras
-// tools deste agente.
+// tools deste agente. Anotar informação nova é "anotarContextoViagem" (automático, só acrescenta);
+// esta substitui o texto inteiro, por isso `requireApproval: true`.
 export const updateTravelContextTool = createTool({
   id: 'atualizarContextoViagem',
+  requireApproval: true,
   description:
-    'Cria ou substitui o "Contexto da Viagem" cadastrado pelo consultor (perfil do cliente, tipo de viagem, preferências etc.) — ' +
-    'complementa os vouchers, não é extraído deles. Substitui o texto inteiro (não é um append), inclusive apagando o que já estava ' +
-    'escrito. Use quando o consultor pedir para anotar/atualizar essa informação, ou mandar limpar o campo (envie `summary: null` ' +
-    'nesse caso). Nunca preencha esse campo por iniciativa própria com algo que o consultor não pediu explicitamente para registrar. ' +
-    'REGRA OBRIGATÓRIA: se o novo texto for substituir um contexto já cadastrado (não só criar um novo do zero), confirme com o ' +
-    'consultor antes de sobrescrever — nunca chame esta tool na mesma resposta em que você propôs a mudança.',
+    'Reescreve o Contexto da Viagem INTEIRO (substitui o texto atual). Use só pra corrigir uma informação que ficou errada ou ' +
+    'reorganizar/consolidar o texto (ex: quando ficar longo ou tiver informações que se contradizem), mantendo tudo que continua ' +
+    'válido. Pra guardar uma informação nova, use "anotarContextoViagem". Envie `summary: null` só se o consultor pedir pra limpar ' +
+    'o campo. A chamada pausa esperando confirmação do consultor antes de gravar.',
   inputSchema: z.object({
     summary: z
       .string()
-      .max(MAX_SUMMARY_LENGTH)
+      .max(MAX_TRAVEL_SUMMARY_LENGTH)
       .nullable()
       .describe('Novo texto do "Contexto da Viagem" (substitui o anterior inteiro), ou `null`/string vazia para limpar o campo.'),
   }),

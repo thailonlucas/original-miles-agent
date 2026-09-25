@@ -1,6 +1,6 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
-import { getTenantIdByEmail, getTenantIdByTravelId, getTravelSummary, saveTravelSummary } from '../services/travel-db';
+import { getTenantIdByEmail, getTenantIdByTravelId, getTravelSummary, MAX_TRAVEL_SUMMARY_LENGTH, saveTravelSummary } from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { parseOrBadRequest } from './validate';
 
@@ -15,15 +15,11 @@ async function resolveTenantId(authorizationHeader: string | undefined | null): 
   return { tenantId, userId: user.id };
 }
 
-// Trava um resumo absurdamente longo em vez de rejeitar — mesmo cuidado do `prompt` pontual de
-// `schedule-suggestion-routes.ts`, aqui um pouco mais generoso (é um contexto persistido, não um
-// pedido de uma chamada só).
-const MAX_SUMMARY_LENGTH = 4000;
 
 const updateBodySchema = z.object({
   travel_id: z.string().min(1),
   // `null`/string vazia limpam o resumo cadastrado.
-  summary: z.string().max(MAX_SUMMARY_LENGTH).nullable(),
+  summary: z.string().max(MAX_TRAVEL_SUMMARY_LENGTH).nullable(),
 });
 
 export const travelSummaryGetRoute = registerApiRoute('/travel_agent/travel-summary', {

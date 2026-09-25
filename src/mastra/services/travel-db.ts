@@ -2,6 +2,8 @@ import pg from 'pg';
 import { env } from '../config/env';
 import { requireEnv } from '../config/require-env';
 import { dailyScheduleSchema, type DailyScheduleDay, type DailyScheduleEvent } from '../agents/daily-schedule/schema';
+import { addApprovedSuggestions, insertEventIntoDays, scheduleRange, withoutSuggestion } from '../agents/daily-schedule/schedule-merge';
+import { normalizeEventContent } from '../agents/daily-schedule/event-format';
 
 // Acesso direto ao Postgres do Supabase (mesma connection string usada pelo storage do Mastra,
 // ver `mastra-instance.ts`), em vez do client REST (`services/supabase.ts`, `SUPABASE_SERVICE_ROLE_KEY`).
@@ -258,6 +260,53 @@ export async function saveTravelSchedule(tenantId: string, travelId: string, sta
   ]);
 }
 
+// `travel_start_at`/`travel_end_at` se expandem quando `date` cai fora do range já conhecido (ex:
+// uma sugestão aprovada, ou um evento movido, pra um dia mais cedo/tarde do que qualquer coisa já
+// vista).
+function expandTravelRange(travelStartAt: string | null, travelEndAt: string | null, date: string): { travelStartAt: string; travelEndAt: string } {
+  return {
+    travelStartAt: !travelStartAt || date < travelStartAt ? date : travelStartAt,
+    travelEndAt: !travelEndAt || date > travelEndAt ? date : travelEndAt,
+  };
+}
+
+// Insere um evento novo em `daily_schedule` (criando o dia se precisar) dentro de uma
+// transação/lock JÁ ABERTA por quem chama — pra quando o insert precisa ser atômico junto de outra
+// escrita na mesma chamada (ver `applySuggestionDecision`/`createDecidedSuggestion`,
+// `agents/schedule-suggestion/`). `insertDailyScheduleEvent` logo abaixo é a versão standalone
+// (abre seu próprio lock) pra quem só precisa disso.
+export async function insertScheduleEventWithClient(
+  tenantId: string,
+  travelId: string,
+  client: pg.PoolClient,
+  date: string,
+  period: 'morning' | 'afternoon' | 'night',
+  event: DailyScheduleEvent,
+): Promise<DailyScheduleEvent> {
+  const state = await getTravelSchedule(tenantId, travelId, client);
+  const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+  const days = parsed.success ? parsed.data : [];
+
+  const normalized: DailyScheduleEvent = { ...event, content: normalizeEventContent(event.content) };
+  const newDays = insertEventIntoDays(days, date, period, normalized);
+  const { travelStartAt, travelEndAt } = expandTravelRange(state.travelStartAt, state.travelEndAt, date);
+  await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt, travelEndAt }, client);
+  return normalized;
+}
+
+export async function insertDailyScheduleEvent(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  date: string,
+  period: 'morning' | 'afternoon' | 'night',
+  event: DailyScheduleEvent,
+): Promise<DailyScheduleEvent> {
+  return withTravelScheduleLock(tenantId, travelId, userId, (client) =>
+    insertScheduleEventWithClient(tenantId, travelId, client, date, period, event),
+  );
+}
+
 // Edita título/conteúdo de UM evento já confirmado do roteiro (originado de voucher) — mesma ideia
 // de editar um voucher (`updateVoucher` no frontend) — e/ou MOVE esse evento pra outro dia/período
 // (`newDate`/`newPeriod`), mesma ação do drag-and-drop do front (`handleMoveEvent`,
@@ -274,7 +323,7 @@ export async function updateDailyScheduleEvent(
   date: string,
   period: 'morning' | 'afternoon' | 'night',
   index: number,
-  patch: { title?: string; content?: string; newDate?: string; newPeriod?: 'morning' | 'afternoon' | 'night' },
+  patch: { title?: string; content?: string; newDate?: string; newPeriod?: 'morning' | 'afternoon' | 'night'; newIndex?: number },
 ): Promise<DailyScheduleEvent | null> {
   return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const state = await getTravelSchedule(tenantId, travelId, client);
@@ -293,33 +342,33 @@ export async function updateDailyScheduleEvent(
     const updatedEvent: DailyScheduleEvent = {
       ...current,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
-      ...(patch.content !== undefined ? { content: patch.content } : {}),
+      ...(patch.content !== undefined ? { content: normalizeEventContent(patch.content) } : {}),
     };
 
     const targetDate = patch.newDate ?? date;
     const targetPeriod = patch.newPeriod ?? period;
     let newDays: DailyScheduleDay[];
 
-    if (targetDate === date && targetPeriod === period) {
-      // Sem move — mesmo caminho de sempre, substitui o evento no lugar (preserva a posição).
+    if (targetDate === date && targetPeriod === period && (patch.newIndex === undefined || patch.newIndex === index)) {
+      // Sem move — substitui o evento no lugar (preserva a posição).
       const newEvents = [...events];
       newEvents[index] = updatedEvent;
       newDays = [...days];
       newDays[dayIndex] = { ...day, events: { ...day.events, [period]: newEvents } };
     } else if (targetDate === date) {
-      // Move só de período, mesmo dia — o dia nunca fica vazio no meio do caminho (o evento sai de
-      // um período e entra no outro do MESMO objeto), então preserva o `title` do dia sem recriar
-      // nada.
-      const sourceEvents = events.filter((_, i) => i !== index);
+      // Mesmo dia (outro período ou outra posição no mesmo período) — o evento sai e entra no MESMO
+      // objeto de dia, que nunca fica vazio no caminho, então o `title` do dia é preservado.
+      // `newIndex` é a posição final no período de destino; sem ele, vai pro fim.
+      const withoutEvent = { ...day.events, [period]: events.filter((_, i) => i !== index) };
+      const target = [...withoutEvent[targetPeriod]];
+      target.splice(Math.max(0, Math.min(patch.newIndex ?? target.length, target.length)), 0, updatedEvent);
       newDays = [...days];
-      newDays[dayIndex] = {
-        ...day,
-        events: { ...day.events, [period]: sourceEvents, [targetPeriod]: [...day.events[targetPeriod], updatedEvent] },
-      };
+      newDays[dayIndex] = { ...day, events: { ...withoutEvent, [targetPeriod]: target } };
     } else {
       // Move de dia — remove do dia de origem (removendo o dia inteiro da lista se ficar sem
       // nenhum evento, já que `daily_schedule` é esparso: só guarda dias com >=1 evento) e insere
-      // no dia de destino, criando-o (ordenado por data) se ele ainda não existir na lista.
+      // no dia de destino (`insertEventIntoDays` cria o dia, ordenado por data, se ele ainda não
+      // existir na lista).
       const remainingSourceEvents = events.filter((_, i) => i !== index);
       const sourceDay: DailyScheduleDay = { ...day, events: { ...day.events, [period]: remainingSourceEvents } };
       const sourceIsEmpty =
@@ -332,30 +381,55 @@ export async function updateDailyScheduleEvent(
         daysWithoutSourceEvent[dayIndex] = sourceDay;
       }
 
-      const destIndex = daysWithoutSourceEvent.findIndex((d) => d.date === targetDate);
-      if (destIndex >= 0) {
-        const destDay = daysWithoutSourceEvent[destIndex];
-        daysWithoutSourceEvent[destIndex] = {
-          ...destDay,
-          events: { ...destDay.events, [targetPeriod]: [...destDay.events[targetPeriod], updatedEvent] },
-        };
-      } else {
-        // Dia novo (ainda sem nenhum evento) — sem uma chamada de IA aqui pra gerar um título
-        // melhor pro dia, usa o título do próprio evento movido.
-        const newDay: DailyScheduleDay = {
-          date: targetDate,
-          title: updatedEvent.title,
-          events: { morning: [], afternoon: [], night: [], [targetPeriod]: [updatedEvent] },
-        };
-        const insertAt = daysWithoutSourceEvent.findIndex((d) => d.date > targetDate);
-        if (insertAt < 0) daysWithoutSourceEvent.push(newDay);
-        else daysWithoutSourceEvent.splice(insertAt, 0, newDay);
-      }
-      newDays = daysWithoutSourceEvent;
+      newDays = insertEventIntoDays(daysWithoutSourceEvent, targetDate, targetPeriod, updatedEvent, patch.newIndex);
     }
 
-    await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt: state.travelStartAt, travelEndAt: state.travelEndAt }, client);
+    const { travelStartAt, travelEndAt } = expandTravelRange(state.travelStartAt, state.travelEndAt, targetDate);
+    await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt, travelEndAt }, client);
     return updatedEvent;
+  });
+}
+
+// Remove UM evento do dia a dia, localizado por (date, period, index) — tira o dia da lista se ele
+// ficar vazio. Um evento de voucher removido assim volta se aquele voucher for atualizado ou o dia a
+// dia for regenerado (a origem dele continua sendo o voucher); pra tirar de vez, exclua o voucher.
+export async function removeDailyScheduleEvent(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  date: string,
+  period: 'morning' | 'afternoon' | 'night',
+  index: number,
+): Promise<DailyScheduleEvent | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const state = await getTravelSchedule(tenantId, travelId, client);
+    const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+    if (!parsed.success) return null;
+
+    const days = parsed.data;
+    const day = days.find((d) => d.date === date);
+    const removed = day?.events[period][index];
+    if (!day || !removed) return null;
+
+    const events = { ...day.events, [period]: day.events[period].filter((_, i) => i !== index) };
+    const remaining = [...events.morning, ...events.afternoon, ...events.night];
+    const newDays = days.flatMap((d) => {
+      if (d !== day) return [d];
+      if (remaining.length === 0) return [];
+      return [{ ...d, title: d.title === removed.title ? remaining[0].title : d.title, events }];
+    });
+
+    const { travelStartAt, travelEndAt } = scheduleRange(newDays);
+    await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt, travelEndAt }, client);
+
+    // Evento de uma sugestão aprovada: a sugestão sai junto (mesma regra de `removeSuggestion`, no
+    // sentido inverso) — senão ela ficava "aprovada" sem evento e voltava a aparecer como card no kanban.
+    if (removed.source?.type === 'suggestion') {
+      const suggestionId = removed.source.suggestion_id;
+      const suggestions = await getSuggestions(tenantId, travelId, client);
+      await saveSuggestions(tenantId, travelId, suggestions.filter((s) => s.id !== suggestionId), client);
+    }
+    return removed;
   });
 }
 
@@ -378,6 +452,27 @@ export async function getTravelSummary(tenantId: string, travelId: string, clien
 export async function saveTravelSummary(tenantId: string, travelId: string, summary: string | null, userId: string): Promise<void> {
   await ensureTravelExists(tenantId, travelId, userId);
   await getPool().query(`update travel set summary = $1 where tenant_id = $2 and id = $3`, [summary, tenantId, travelId]);
+}
+
+// Tamanho máximo do Contexto da Viagem — mesmo limite pra rota (`routes/travel-summary-routes.ts`)
+// e pras tools do Ori.
+export const MAX_TRAVEL_SUMMARY_LENGTH = 4000;
+
+// Acrescenta UMA anotação ao fim do Contexto da Viagem, sem tocar no que já existe — o Ori chama isso
+// sozinho sempre que o consultor conta algo sobre o cliente/viagem. Concatenar no SQL (em vez de o
+// model reescrever o texto inteiro) garante que nada já escrito se perde, e o limite é conferido na
+// mesma query. Devolve `null` se não couber — aí o contexto precisa ser consolidado.
+export async function appendTravelSummary(tenantId: string, travelId: string, userId: string, note: string): Promise<string | null> {
+  const line = `- ${note.trim().replace(/^-\s*/, '')}`;
+  await ensureTravelExists(tenantId, travelId, userId);
+  const { rows } = await getPool().query<{ summary: string }>(
+    `update travel
+     set summary = case when coalesce(summary, '') = '' then $1 else summary || E'\\n' || $1 end
+     where tenant_id = $2 and id = $3 and length(coalesce(summary, '')) + length($1) + 1 <= $4
+     returning summary`,
+    [line, tenantId, travelId, MAX_TRAVEL_SUMMARY_LENGTH],
+  );
+  return rows[0]?.summary ?? null;
 }
 
 export type SuggestionStatus = 'pending' | 'approved' | 'rejected';
@@ -448,9 +543,10 @@ export async function decideSuggestion(
   suggestionId: string,
   status: 'approved' | 'rejected',
   feedback: string | null,
+  client: Queryable = getPool(),
 ): Promise<boolean> {
   const decidedAt = new Date().toISOString();
-  const { rows } = await getPool().query<{ decided: boolean }>(
+  const { rows } = await client.query<{ decided: boolean }>(
     `update travel
      set suggestions = coalesce((
        select jsonb_agg(
@@ -470,6 +566,47 @@ export async function decideSuggestion(
     [tenantId, travelId, suggestionId, status, feedback, decidedAt],
   );
   return rows.length > 0;
+}
+
+// Registra uma sugestão que nasceu e foi decidida na própria conversa do Ori (proposta no chat, o
+// consultor gostou ou não) — nunca passou pelo gerador em massa nem ficou pendente no kanban, por isso
+// não reaproveita `applySuggestionDecision`. Aprovada: grava a sugestão E insere o evento no dia a
+// dia, na mesma transação. Rejeitada: só grava a sugestão com o motivo — é esse histórico que faz o
+// gerador de sugestões (`suggest-day-activities.ts`) e o próprio Ori não oferecerem de novo o que já
+// foi recusado. Devolve o evento inserido (aprovada) ou `null` (rejeitada).
+export async function createDecidedSuggestion(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  input: NewSuggestionInput,
+  status: 'approved' | 'rejected',
+  feedback: string | null,
+): Promise<DailyScheduleEvent | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const now = new Date().toISOString();
+    const suggestion: StoredSuggestion = {
+      id: crypto.randomUUID(),
+      date: input.date,
+      period: input.period,
+      event: { ...input.event, content: normalizeEventContent(input.event.content) },
+      reason: input.reason,
+      status,
+      feedback,
+      createdAt: now,
+      decidedAt: now,
+    };
+    await client.query(`update travel set suggestions = coalesce(suggestions, '[]'::jsonb) || $1::jsonb where tenant_id = $2 and id = $3`, [
+      JSON.stringify([suggestion]),
+      tenantId,
+      travelId,
+    ]);
+
+    if (status === 'rejected') return null;
+    return insertScheduleEventWithClient(tenantId, travelId, client, input.date, input.period, {
+      ...suggestion.event,
+      source: { type: 'suggestion', suggestion_id: suggestion.id },
+    });
+  });
 }
 
 // Move uma sugestão (pendente ou já aprovada) pra outro dia/período — usado pelo drag and drop do
@@ -501,21 +638,141 @@ export async function moveSuggestion(
   return rows.length > 0;
 }
 
-// Remove uma sugestão do histórico por completo (qualquer status) — usado pelo botão de apagar
-// uma sugestão já aprovada na tela de histórico. Diferente de rejeitar: some da "inteligência" da
-// viagem também, não fica registrada como rejeição.
-export async function deleteSuggestion(tenantId: string, travelId: string, suggestionId: string): Promise<boolean> {
-  const { rows } = await getPool().query<{ removed: boolean }>(
-    `update travel
-     set suggestions = coalesce((
-       select jsonb_agg(elem) from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem where elem->>'id' <> $3
-     ), '[]'::jsonb)
-     where tenant_id = $1 and id = $2
-       and exists (select 1 from jsonb_array_elements(coalesce(suggestions, '[]'::jsonb)) elem where elem->>'id' = $3)
-     returning true as removed`,
-    [tenantId, travelId, suggestionId],
-  );
-  return rows.length > 0;
+async function saveSuggestions(tenantId: string, travelId: string, suggestions: StoredSuggestion[], client: Queryable): Promise<void> {
+  await client.query(`update travel set suggestions = $1::jsonb where tenant_id = $2 and id = $3`, [JSON.stringify(suggestions), tenantId, travelId]);
+}
+
+export interface NewSuggestionInput {
+  date: string;
+  period: 'morning' | 'afternoon' | 'night';
+  event: { title: string; content: string; type: string; observation: string | null };
+  reason: string | null;
+}
+
+// Cria UMA sugestão pendente a partir da conversa (sem passar pelo gerador em massa) — ela aparece
+// no kanban de sugestões pra ser decidida depois, igual às geradas por `sugerirAtividades`. Usada
+// pela tool `criarSugestao` do Ori e pela rota `POST /travel_agent/schedule-suggestion/item`.
+export async function createPendingSuggestion(tenantId: string, travelId: string, userId: string, input: NewSuggestionInput): Promise<StoredSuggestion> {
+  const suggestion: StoredSuggestion = {
+    id: crypto.randomUUID(),
+    date: input.date,
+    period: input.period,
+    event: { ...input.event, content: normalizeEventContent(input.event.content) },
+    reason: input.reason,
+    status: 'pending',
+    feedback: null,
+    createdAt: new Date().toISOString(),
+    decidedAt: null,
+  };
+  await appendPendingSuggestions(tenantId, travelId, userId, [suggestion]);
+  return suggestion;
+}
+
+export interface SuggestionPatch {
+  title?: string;
+  content?: string;
+  type?: string;
+  reason?: string | null;
+  date?: string;
+  period?: 'morning' | 'afternoon' | 'night';
+}
+
+// Altera texto e/ou dia/período de uma sugestão AINDA PENDENTE. Uma aprovada já virou evento do dia
+// a dia — aí o que se edita é o evento (`updateDailyScheduleEvent`), não a sugestão. Devolve `null`
+// se o id não existir ou a sugestão já tiver sido decidida. Usada pela tool `atualizarSugestao` e
+// pela rota `PATCH /travel_agent/schedule-suggestion/item`.
+export async function updatePendingSuggestion(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  suggestionId: string,
+  patch: SuggestionPatch,
+): Promise<StoredSuggestion | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const suggestions = await getSuggestions(tenantId, travelId, client);
+    const current = suggestions.find((s) => s.id === suggestionId && s.status === 'pending');
+    if (!current) return null;
+
+    const updated: StoredSuggestion = {
+      ...current,
+      date: patch.date ?? current.date,
+      period: patch.period ?? current.period,
+      reason: patch.reason !== undefined ? patch.reason : current.reason,
+      event: {
+        ...current.event,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.content !== undefined ? { content: normalizeEventContent(patch.content) } : {}),
+        ...(patch.type !== undefined ? { type: patch.type } : {}),
+      },
+    };
+    await saveSuggestions(tenantId, travelId, suggestions.map((s) => (s.id === suggestionId ? updated : s)), client);
+    return updated;
+  });
+}
+
+export interface ApprovedSuggestionsBackfill {
+  inserted: { date: string; period: string; title: string }[];
+  duplicates: { date: string; period: string; title: string }[];
+}
+
+// Migração única: sugestões aprovadas ANTES de aprovar passar a inserir o evento continuam só como
+// "sugestão aprovada" (card fora da cronologia do dia a dia). Isto põe cada uma no dia a dia como
+// evento de verdade (`source: suggestion`). Duplicada (mesmo título no mesmo dia/período de um
+// evento que já existe) não vira outro evento — a sugestão repetida é apagada. `apply: false` só
+// relata o que faria, sem gravar. Usada por `scripts/backfill-approved-suggestions.ts`.
+export async function backfillApprovedSuggestions(tenantId: string, travelId: string, apply: boolean): Promise<ApprovedSuggestionsBackfill> {
+  const { rows } = await getPool().query<{ created_by: string | null }>(`select created_by from travel where tenant_id = $1 and id = $2`, [
+    tenantId,
+    travelId,
+  ]);
+  const ownerId = rows[0]?.created_by;
+  if (!ownerId) return { inserted: [], duplicates: [] };
+
+  return withTravelScheduleLock(tenantId, travelId, ownerId, async (client) => {
+    const state = await getTravelSchedule(tenantId, travelId, client);
+    const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+    const days = parsed.success ? parsed.data : [];
+    const suggestions = await getSuggestions(tenantId, travelId, client);
+
+    const result = addApprovedSuggestions(days, suggestions);
+    const describe = (id: string) => {
+      const s = suggestions.find((x) => x.id === id)!;
+      return { date: s.date, period: s.period, title: s.event.title };
+    };
+
+    if (apply && (result.insertedIds.length > 0 || result.duplicateIds.length > 0)) {
+      const { travelStartAt, travelEndAt } = scheduleRange(result.days);
+      await saveTravelSchedule(tenantId, travelId, { dailySchedule: result.days, travelStartAt, travelEndAt }, client);
+      const duplicates = new Set(result.duplicateIds);
+      await saveSuggestions(tenantId, travelId, suggestions.filter((s) => !duplicates.has(s.id)), client);
+    }
+    return { inserted: result.insertedIds.map(describe), duplicates: result.duplicateIds.map(describe) };
+  });
+}
+
+// Remove uma sugestão por completo (qualquer status). Diferente de rejeitar: some do histórico e da
+// "inteligência" da viagem. Se ela já tinha sido aprovada, o evento que ela virou no dia a dia sai
+// junto, na mesma transação — antes o evento ficava órfão. Usada pela tool `removerSugestao` e pela
+// rota `DELETE /travel_agent/schedule-suggestion/decision` (botão de apagar do histórico).
+export async function removeSuggestion(tenantId: string, travelId: string, userId: string, suggestionId: string): Promise<StoredSuggestion | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const suggestions = await getSuggestions(tenantId, travelId, client);
+    const removed = suggestions.find((s) => s.id === suggestionId);
+    if (!removed) return null;
+
+    await saveSuggestions(tenantId, travelId, suggestions.filter((s) => s.id !== suggestionId), client);
+
+    if (removed.status === 'approved') {
+      const state = await getTravelSchedule(tenantId, travelId, client);
+      const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+      if (parsed.success) {
+        const days = withoutSuggestion(parsed.data, suggestionId);
+        const { travelStartAt, travelEndAt } = scheduleRange(days);
+        await saveTravelSchedule(tenantId, travelId, { dailySchedule: days, travelStartAt, travelEndAt }, client);
+      }
+    }
+    return removed;
+  });
 }
 
 // Namespace arbitrário pro advisory lock abaixo — só existe pra não colidir com outro uso futuro

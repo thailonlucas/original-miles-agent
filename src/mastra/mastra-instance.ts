@@ -23,15 +23,17 @@ import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-s
 import { oriAgent } from './agents/ori/ori-agent';
 import { voucherExtractRoute, voucherDeleteRoute, voucherListRoute, voucherUpdateRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute, dailyScheduleGetRoute } from './routes/daily-schedule-routes';
-import { dailyScheduleEventUpdateRoute } from './routes/daily-schedule-event-routes';
+import { dailyScheduleEventCreateRoute, dailyScheduleEventDeleteRoute, dailyScheduleEventUpdateRoute } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
-import { oriChatRoute } from './routes/ori-routes';
+import { oriChatRoute, oriApprovalRoute } from './routes/ori-routes';
 import { skillListRoute, skillCreateRoute, skillUpdateRoute } from './routes/skill-routes';
 import { voucherTypeListRoute, voucherTypeCreateRoute, voucherTypeUpdateRoute } from './routes/voucher-type-routes';
 import {
   scheduleSuggestionDecisionListRoute,
   scheduleSuggestionDecisionRoute,
   scheduleSuggestionDeleteRoute,
+  scheduleSuggestionItemCreateRoute,
+  scheduleSuggestionItemUpdateRoute,
   scheduleSuggestionMoveRoute,
 } from './routes/schedule-suggestion-decision-routes';
 import { travelSummaryGetRoute, travelSummaryUpdateRoute } from './routes/travel-summary-routes';
@@ -79,7 +81,10 @@ export const mastra = new Mastra({
       dailyScheduleGenerateRoute,
       dailyScheduleGetRoute,
       dailyScheduleEventUpdateRoute,
+      dailyScheduleEventCreateRoute,
+      dailyScheduleEventDeleteRoute,
       oriChatRoute,
+      oriApprovalRoute,
       skillListRoute,
       skillCreateRoute,
       skillUpdateRoute,
@@ -91,6 +96,8 @@ export const mastra = new Mastra({
       scheduleSuggestionDecisionListRoute,
       scheduleSuggestionMoveRoute,
       scheduleSuggestionDeleteRoute,
+      scheduleSuggestionItemCreateRoute,
+      scheduleSuggestionItemUpdateRoute,
       travelSummaryGetRoute,
       travelSummaryUpdateRoute,
       companyReferenceListRoute,

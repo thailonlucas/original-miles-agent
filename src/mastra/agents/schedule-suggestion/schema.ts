@@ -1,22 +1,19 @@
 import { z } from 'zod';
+import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../daily-schedule/event-format';
 
 // Mesmo formato de um evento do daily_schedule (ver `agents/daily-schedule/schema.ts` ->
 // `dailyScheduleEventSchema`) + "reason", que existe só pra ajudar o usuário a decidir se aprova a
 // sugestão — ao aprovar, `title`/`content`/`type`/`observation` são gravados exatamente como um
 // evento novo no dia (a UI descarta "reason" nesse momento).
 export const scheduleSuggestionEventSchema = z.object({
-  title: z.string().describe("Título curto da atividade sugerida (ex: 'Museu do Louvre')."),
+  title: z.string().describe(EVENT_TITLE_FORMAT),
   content: z
     .string()
     .describe(
-      'Markdown com os detalhes da atividade sugerida (o que é, região/endereço aproximado, duração estimada). Mesmo padrão de conteúdo ' +
-        'de um evento normal do roteiro — ao ser aprovada, esta sugestão é gravada exatamente como um evento novo do dia.',
+      `${EVENT_CONTENT_FORMAT} Pra uma sugestão, endereço/região e duração são aproximados — ao ser aprovada, ela é gravada ` +
+        'exatamente como um evento do dia a dia.',
     ),
-  type: z
-    .string()
-    .describe(
-      'Categoria da sugestão, mesma convenção do `type` usado nos eventos do daily_schedule (ex: experience, restaurant_reservation, other).',
-    ),
+  type: z.string().describe(EVENT_TYPE_FORMAT),
   observation: z
     .string()
     .nullable()

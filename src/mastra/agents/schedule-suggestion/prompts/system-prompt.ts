@@ -1,6 +1,7 @@
 import type { StoredSuggestion, VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import type { ScheduleSuggestionEvent, SchedulePeriod } from '../schema';
+import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
 
 // Reaproveitados pelo prompt do validador (`prompts/validation-prompt.ts`) — mesmo contexto
 // (vouchers, outros dias, histórico de decisões) que o gerador já usa, pra avaliar as sugestões
@@ -86,8 +87,9 @@ ${profileSection}
 4.3. Se houver um "Resumo geral da viagem" (mensagem do usuário), use-o como pano de fundo pra TODAS as sugestões deste dia (não só quando não houver pedido pontual) — ele pode trazer sinais que os vouchers sozinhos não mostram (ex: "lua de mel", "viagem em família com crianças pequenas", "primeira viagem internacional do casal"). Ele nunca invalida o pedido pontual do passo 4.2 quando os dois existirem juntos — o pedido pontual manda no nível/estilo, o resumo geral só complementa com contexto.
 5. Toda sugestão precisa ser plausível e viável de verdade — coisas que realmente existem/fazem sentido no destino identificado (pode usar seu conhecimento geral sobre o destino pra isso), nunca extrapoladas de vouchers que não tratam de passeios/atividades (ex: não sugerir algo a partir de um voucher de seguro-viagem).
 6. Preencha "reason" de cada sugestão com o motivo objetivo dela fazer sentido nesse dia/período (ex: "fica a 10 min a pé do ponto de encontro do passeio de barco já confirmado desta manhã", "restaurante do mesmo padrão dos outros já reservados na viagem", "opção kid-friendly já que há uma criança viajando", "no caminho do deslocamento entre as duas cidades deste dia").
-7. "type" segue a mesma convenção usada nos eventos do roteiro (ex: experience, restaurant_reservation, other).
-8. "content" deve ser markdown com os detalhes da atividade (o que é, região/endereço aproximado, duração estimada) — mesmo padrão de um evento normal do roteiro, já que sugestões aprovadas são gravadas exatamente como um evento novo.
+7. "type": ${EVENT_TYPE_FORMAT}
+7.1. "title": ${EVENT_TITLE_FORMAT}
+8. "content": ${EVENT_CONTENT_FORMAT} Endereço/região e duração podem ser aproximados — sugestões aprovadas são gravadas exatamente como um evento do dia a dia.
 9. "observation" segue a mesma regra dos eventos do roteiro: normalmente null; preencha só se a sugestão precisar registrar algum conflito/ressalva em relação a um evento já confirmado.`;
 }
 
