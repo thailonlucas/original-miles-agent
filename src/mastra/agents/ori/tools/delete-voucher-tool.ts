@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { deleteVoucher } from '../../../services/travel-db';
-import { triggerDailyScheduleRemoval } from './daily-schedule-trigger';
+import { triggerDailyScheduleRemoval } from '../../daily-schedule/daily-schedule-trigger';
 
 // "Deletar Documento" — exclui um voucher pelo doc_id. Ação destrutiva e irreversível: só chame
 // depois que o consultor confirmar explicitamente que quer excluir aquele voucher específico,

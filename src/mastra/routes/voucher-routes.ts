@@ -1,7 +1,7 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
-import { extractVoucher, extractVoucherFromText } from '../agents/voucher-extractor/voucher-extractor';
-import { removeVoucherFromDailySchedule, updateDailyScheduleForVoucher } from '../agents/daily-schedule/rebuild-daily-schedule';
+import { triggerDailyScheduleRemoval, triggerDailyScheduleUpdate } from '../agents/daily-schedule/daily-schedule-trigger';
+import { createExtractedVoucher, type VoucherIssuer } from '../services/create-voucher';
 import {
   insertVoucher,
   deleteVoucher,
@@ -9,33 +9,15 @@ import {
   updateVoucherFields,
   getTenantIdByEmail,
   getTenantIdByTravelId,
-  type VoucherSummary,
   type UpdateVoucherInput,
 } from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { logConversationError } from '../helpers/logger';
 import { parseOrBadRequest } from './validate';
 
-// Ambas disparam em background — a resposta HTTP não espera o dia a dia terminar de atualizar.
-// Criar/editar voucher -> regera só os eventos dele. Excluir -> só remove os eventos dele (sem IA).
-function triggerDailyScheduleUpdate(tenantId: string, travelId: string, voucher: VoucherSummary, userId: string): void {
-  void updateDailyScheduleForVoucher(tenantId, travelId, voucher, userId).catch((error) =>
-    logConversationError(travelId, 'falha ao atualizar daily_schedule', error),
-  );
-}
-
-function triggerDailyScheduleRemoval(tenantId: string, travelId: string, voucherId: string, userId: string): void {
-  void removeVoucherFromDailySchedule(tenantId, travelId, voucherId, userId).catch((error) =>
-    logConversationError(travelId, `falha ao remover voucher ${voucherId} do daily_schedule`, error),
-  );
-}
-
 const FALLBACK_VOUCHER_TYPE_SLUG = 'other';
 
-// Quem criou o voucher: "company" (time da agência) ou "customer" (cliente sozinho, self-service).
-// Salvo em `metadata.issuer` (não existe coluna própria pra isso na tabela `voucher`).
-const VOUCHER_ISSUERS = ['company', 'customer'] as const;
-type VoucherIssuer = (typeof VOUCHER_ISSUERS)[number];
+const VOUCHER_ISSUERS: readonly VoucherIssuer[] = ['company', 'customer'];
 
 function isVoucherIssuer(value: unknown): value is VoucherIssuer {
   return typeof value === 'string' && (VOUCHER_ISSUERS as readonly string[]).includes(value);
@@ -122,47 +104,16 @@ export const voucherExtractRoute = registerApiRoute('/travel_agent/extract/vouch
       return c.json(voucher, 201);
     }
 
-    let extraction;
+    const source = hasFile
+      ? { file: new Uint8Array(await file.arrayBuffer()), mediaType: file.type || 'application/pdf', fileName: file.name || null }
+      : { text: text as string };
     try {
-      if (hasFile) {
-        extraction = await extractVoucher(new Uint8Array(await file.arrayBuffer()), file.type || 'application/pdf', tenantId);
-      } else if (hasText) {
-        extraction = await extractVoucherFromText(text, tenantId);
-      } else {
-        throw new Error('unreachable: nem "file" nem "text" presentes'); // já validado acima
-      }
+      const voucher = await createExtractedVoucher(tenantId, travelId, userId, source, issuer);
+      return c.json(voucher, 201);
     } catch (error) {
       logConversationError(travelId, 'falha ao extrair voucher', error);
       return c.json({ error: 'extraction_failed', message: error instanceof Error ? error.message : String(error) }, 500);
     }
-
-    const voucher = await insertVoucher({
-      tenantId,
-      travelId,
-      title:
-        typeof extraction.extractedData.document_name === 'string'
-          ? extraction.extractedData.document_name
-          : (hasFile && file.name) || null,
-      content: typeof extraction.extractedData.content === 'string' ? extraction.extractedData.content : null,
-      voucherTypeSlug: extraction.voucherTypeSlug,
-      aiExtractedData: extraction.extractedData,
-      rawContent: extraction.rawContent,
-      metadata,
-      fileUrl: null,
-    });
-
-    triggerDailyScheduleUpdate(
-      tenantId,
-      travelId,
-      {
-        id: voucher.id,
-        title: voucher.title,
-        voucherTypeSlug: voucher.voucher_type_slug,
-        content: voucher.content,
-      },
-      userId,
-    );
-    return c.json(voucher, 201);
   },
 });
 

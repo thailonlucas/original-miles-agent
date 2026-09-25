@@ -1,7 +1,8 @@
 import type { StoredSuggestion, VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
+import { describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
 import type { ScheduleSuggestionEvent, SchedulePeriod } from '../schema';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_DETAILS_GUIDE, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
 
 // Reaproveitados pelo prompt do validador (`prompts/validation-prompt.ts`) — mesmo contexto
 // (vouchers, outros dias, histórico de decisões) que o gerador já usa, pra avaliar as sugestões
@@ -16,16 +17,19 @@ export function formatVoucherList(vouchers: VoucherSummary[]): string {
 
 // Resumo compacto (sem "content" de cada evento) dos OUTROS dias do roteiro — só pra dar noção de
 // deslocamento (ex: check-out em uma cidade um dia, check-in em outra no dia seguinte) e do padrão
-// geral da viagem. O agente ainda precisa abrir os vouchers relevantes (tool "openVoucher") pra
+// geral da viagem. `ongoing` diz onde o cliente está nos dias do meio de uma hospedagem/aluguel (o
+// dia a dia só tem evento no início e no fim). O agente ainda precisa abrir os vouchers relevantes (tool "openVoucher") pra
 // qualquer detalhe usado de fato numa sugestão.
 export function formatOtherDaysSummary(fullSchedule: DailyScheduleDay[], day: string): string {
   const otherDays = fullSchedule.filter((d) => d.date !== day);
   if (otherDays.length === 0) return '(nenhum outro dia com evento confirmado ainda)';
+  const stays = ongoingStays(fullSchedule);
   return JSON.stringify(
     otherDays.map((d) => ({
       date: d.date,
       title: d.title,
       events: [...d.events.morning, ...d.events.afternoon, ...d.events.night].map((e) => ({ title: e.title, type: e.type })),
+      ...(stays.has(d.date) ? { ongoing: stays.get(d.date)!.map(describeStay) } : {}),
     })),
     null,
     2,
@@ -90,6 +94,8 @@ ${profileSection}
 7. "type": ${EVENT_TYPE_FORMAT}
 7.1. "title": ${EVENT_TITLE_FORMAT}
 8. "content": ${EVENT_CONTENT_FORMAT} Endereço/região e duração podem ser aproximados — sugestões aprovadas são gravadas exatamente como um evento do dia a dia.
+8.1. Detalhes por tipo de evento — preencha TODOS os itens "(do lugar)" do tipo da sugestão (o que é, endereço, duração, como chegar a partir do hotel/evento anterior, preço médio, traje), com o que se sabe do lugar. Os outros itens (horário marcado, reserva, pessoas) só existem depois que o cliente reservar: não invente — no máximo "**Reserva:** recomendada" ou um horário sugerido marcado como sugestão.
+${EVENT_DETAILS_GUIDE}
 9. "observation" segue a mesma regra dos eventos do roteiro: normalmente null; preencha só se a sugestão precisar registrar algum conflito/ressalva em relação a um evento já confirmado.`;
 }
 
@@ -138,7 +144,10 @@ export function buildSuggestionUserMessage(
   summary: string | null = null,
   repair: SuggestionRepairRequest | null = null,
 ): string {
+  const ongoing = (ongoingStays(fullSchedule).get(day) ?? []).map(describeStay);
   return `Dia consultado: ${day}
+
+Onde o cliente está neste dia (hospedagem/aluguel em andamento, sem evento próprio no dia): ${ongoing.length > 0 ? ongoing.join('; ') : '(nada em andamento — veja os eventos do dia e os vouchers)'}
 
 Eventos já confirmados neste dia (roteiro atual — pode não existir ainda se o dia inteiro está livre):
 ${existingDay ? JSON.stringify(existingDay.events, null, 2) : '(nenhum evento confirmado neste dia ainda — os três períodos estão livres)'}

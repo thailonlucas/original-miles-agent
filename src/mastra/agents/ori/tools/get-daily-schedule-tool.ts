@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getTravelSchedule } from '../../../services/travel-db';
 import { dailyScheduleSchema, type DailyScheduleDay } from '../../daily-schedule/schema';
+import { describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const PERIODS = ['morning', 'afternoon', 'night'] as const;
@@ -33,9 +34,14 @@ export const getDailyScheduleTool = createTool({
     const parsed = dailyScheduleSchema.safeParse(dailySchedule);
     const days: DailyScheduleDay[] = parsed.success ? parsed.data : [];
 
+    // Onde o cliente está nos dias do meio de uma hospedagem/aluguel — o dia a dia só tem o evento
+    // de início e o de fim.
+    const stays = ongoingStays(days);
+    const ongoingOn = (d: string) => (stays.has(d) ? { ongoing: stays.get(d)!.map(describeStay) } : {});
+
     if (date) {
       const day = days.find((d) => d.date === date);
-      return day ?? { date, message: 'Nenhum evento neste dia.' };
+      return day ? { ...day, ...ongoingOn(date) } : { date, message: 'Nenhum evento neste dia.', ...ongoingOn(date) };
     }
 
     return {
@@ -47,6 +53,7 @@ export const getDailyScheduleTool = createTool({
         events: PERIODS.flatMap((period) =>
           day.events[period].map((event, index) => ({ period, index, title: event.title, type: event.type, origin: event.source?.type ?? 'voucher' })),
         ),
+        ...ongoingOn(day.date),
       })),
     };
   },

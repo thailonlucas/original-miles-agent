@@ -29,6 +29,10 @@ const eventFields = {
 // `suggested` é legado do mesmo jeito: linhas antigas de sugestão aprovada vinham marcadas assim.
 export const dailyScheduleEventSchema = z.object({
   ...eventFields,
+  // Onde o evento acontece ("Urban Hive Milano, Milão"). Só eventos de voucher têm (a LLM preenche);
+  // é o que diz, nos dias entre o início e o fim de uma hospedagem/aluguel, onde o cliente está
+  // (`ongoingStays`, `schedule-merge.ts`). Opcional: linhas antigas e eventos do chat não têm.
+  place: z.string().nullable().optional(),
   source: dailyScheduleEventSourceSchema.optional(),
   suggested: z.boolean().optional(),
 });
@@ -52,6 +56,12 @@ export const dailyScheduleSchema = z.array(dailyScheduleDaySchema);
 // em `source` e junta com o resto do dia a dia (`schedule-merge.ts`).
 const voucherEventSchema = z.object({
   ...eventFields,
+  place: z
+    .string()
+    .nullable()
+    .describe(
+      'Onde o evento acontece: nome do lugar e cidade, como está no voucher (ex: "Urban Hive Milano, Milão", "Movida Aeroporto BPS, Porto Seguro"). É o que aparece nos dias entre o início e o fim de uma hospedagem ou aluguel. null se o voucher não disser.',
+    ),
   voucher_id: z.string().describe('id do voucher (da lista de vouchers) de onde este evento veio.'),
 });
 

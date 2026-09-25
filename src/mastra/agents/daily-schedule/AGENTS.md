@@ -71,6 +71,14 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   `updateDailyScheduleEvent` aceita `newIndex` (posição final no período de destino) — é o que o
   drag-and-drop do kanban usa pra soltar um card entre dois outros, e o Ori pra "colocar o cinema
   depois do jantar". Sem `newIndex`, um move vai pro fim do período.
+- Tudo que dura vários dias (hospedagem, aluguel de carro, cruzeiro, circuito) gera evento só no
+  início e no fim (check-in/check-out, retirada/devolução...), nunca um por dia do meio — era ruído no
+  kanban. Dia do meio só tem evento se o voucher trouxer uma programação própria daquele dia.
+- Onde o cliente está nos dias do meio não é gravado: `ongoingStays` (`schedule-merge.ts`) deriva dos
+  eventos de início e fim do mesmo voucher, pelo `place` deles ("Urban Hive Milano, Milão", preenchido
+  pela LLM; linhas antigas caem no nome tirado do título). Usado pelo índice do prompt do Ori, por
+  `buscarDiaADia` e pelo resumo do agente de sugestões/validador. O front tem a mesma regra
+  (`ongoingStays` em `daily-schedule/utils.ts`) e mostra no cabeçalho do dia ("Hospedado em ...").
 - Um evento por voucher: se dois vouchers descrevem o mesmo acontecimento (ex: o mesmo voo), cada um
   tem o seu evento, com `observation` apontando o outro. Assim excluir um voucher nunca leva junto
   informação que veio de outro.
@@ -89,7 +97,9 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   (`voucherScheduleResultSchema`, com `voucher_id`).
 - `event-format.ts` — formato único de `title`/`content`/`type` de um evento, usado pelo gerador, pelas
   sugestões (`agents/schedule-suggestion/`) e pelas tools do Ori que incluem/alteram eventos — um evento
-  gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara. Mude o formato só aqui.
+  gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara. Mude o formato só aqui. Também tem `EVENT_DETAILS` (o que um evento completo traz,
+  por tipo, e quem pode preencher cada item: "reserva" ou "lugar"), `EVENT_DETAILS_GUIDE` (a lista em
+  texto, nos três prompts) e `eventDetailGaps` (o que falta num evento — tool `detalharEvento` do Ori).
 - `schedule-merge.ts` — funções puras de junção (`withoutVoucher`, `keptEventsOnly`, `mergeDays`,
   `toStoredDays`, `insertEventIntoDays`, `scheduleRange`, `hasUntaggedEvents`).
 - `daily-schedule-agent.ts` — o `Agent` + `buildVoucherSchedule` (do zero) e `buildVoucherEvents`
@@ -99,4 +109,7 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
 - `rebuild-daily-schedule.ts` — `updateDailyScheduleForVoucher`, `removeVoucherFromDailySchedule`,
   `rebuildVoucherEvents`, `isRelevant` (filtro de `travel_insurance`, aplicado em código).
 - `generate-daily-schedule.ts` — `generateDailySchedule`.
+- `daily-schedule-trigger.ts` — `triggerDailyScheduleUpdate`/`triggerDailyScheduleRemoval`, os
+  gatilhos em background que as rotas de voucher e as tools de voucher do Ori chamam depois de
+  criar/editar/excluir um voucher.
 - `tools/open-voucher-tool.ts` — abre `ai_extracted_data` de um voucher (tenant via `requestContext`).

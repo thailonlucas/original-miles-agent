@@ -182,3 +182,60 @@ export function addApprovedSuggestions(
 export function scheduleRange(days: DailyScheduleDay[]): { travelStartAt: string | null; travelEndAt: string | null } {
   return { travelStartAt: days[0]?.date ?? null, travelEndAt: days[days.length - 1]?.date ?? null };
 }
+
+// Todos os dias de `start` a `end` (YYYY-MM-DD, inclusive), em ordem.
+export function datesBetween(start: string, end: string): string[] {
+  const dates: string[] = [];
+  for (let d = new Date(`${start}T00:00:00Z`); d.toISOString().slice(0, 10) <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+export interface OngoingStay {
+  voucherId: string;
+  type: string;
+  place: string;
+}
+
+// Um voo ou traslado que cai em dois dias (ex: voo noturno) não "hospeda" ninguém no meio.
+const NOT_A_STAY = new Set(['flight', 'transfer']);
+
+const STAY_LABELS: Record<string, string> = { accommodation: 'hospedado em', car_rental: 'com o carro', ferry_boat: 'a bordo de' };
+
+export function describeStay(stay: OngoingStay): string {
+  return `${STAY_LABELS[stay.type] ?? 'em andamento:'} ${stay.place}`;
+}
+
+// Nome do lugar pelo título, pra eventos gravados antes de `place` existir: "Check-in no Urban Hive
+// Milano" -> "Urban Hive Milano", "Retirada do carro Movida em BPS" -> "Movida em BPS".
+function placeFromTitle(title: string): string {
+  return title.replace(/^(check-in|check-out|retirada|devolução|embarque|desembarque|início|fim)\s+((d|n)[oa]s?|em|de)?\s*(carro\s+)?/i, '').trim() || title;
+}
+
+// Onde o cliente está nos dias do MEIO de tudo que dura vários dias — hospedagem entre check-in e
+// check-out, carro entre retirada e devolução, cruzeiro, circuito. O gerador só grava o evento de
+// início e o de fim (sem repetir o voucher em cada dia); isto recupera o "estou no hotel X" desses
+// dias a partir dos eventos de voucher, sem gravar nada. Chave = data; só dias estritamente entre o
+// primeiro e o último evento do voucher.
+export function ongoingStays(days: DailyScheduleDay[]): Map<string, OngoingStay[]> {
+  const spans = new Map<string, { type: string; place: string | null; first: string; last: string }>();
+  for (const day of days) {
+    for (const event of allEvents(day)) {
+      const origin = eventOrigin(event);
+      if (origin.kind !== 'voucher' || NOT_A_STAY.has(event.type)) continue;
+      const span = spans.get(origin.voucherId);
+      const place = event.place ?? span?.place ?? null;
+      if (!span) spans.set(origin.voucherId, { type: event.type, place: place ?? placeFromTitle(event.title), first: day.date, last: day.date });
+      else spans.set(origin.voucherId, { ...span, place: place ?? span.place, first: day.date < span.first ? day.date : span.first, last: day.date > span.last ? day.date : span.last });
+    }
+  }
+
+  const byDate = new Map<string, OngoingStay[]>();
+  for (const [voucherId, span] of spans) {
+    for (const date of datesBetween(span.first, span.last).slice(1, -1)) {
+      byDate.set(date, [...(byDate.get(date) ?? []), { voucherId, type: span.type, place: span.place ?? '' }]);
+    }
+  }
+  return byDate;
+}

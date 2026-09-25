@@ -1,8 +1,9 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { RequestContext } from '@mastra/core/request-context';
-import { getSuggestions, getTravelSchedule, getTravelSummary, getVoucherSummaries } from '../../services/travel-db';
-import { dailyScheduleSchema, type DailyScheduleEvent } from '../daily-schedule/schema';
+import { getDailyScheduleEvent, getSuggestions, getTravelSchedule, getTravelSummary, getVoucherSummaries } from '../../services/travel-db';
+import { dailyScheduleSchema } from '../daily-schedule/schema';
+import type { SchedulePeriod } from '../daily-schedule/schedule-merge';
 import { buildOriInstructions } from './prompts/system-prompt';
 import { oriResultSchema, type OriResponse, type OriResult } from './schema';
 import { searchVoucherTool } from './tools/search-voucher-tool';
@@ -14,6 +15,7 @@ import { updateDailyScheduleEventTool } from './tools/update-daily-schedule-even
 import { getTravelContextTool } from './tools/get-travel-context-tool';
 import { updateTravelContextTool } from './tools/update-travel-context-tool';
 import { getSuggestionsTool } from './tools/get-suggestions-tool';
+import { detailEventTool } from './tools/detail-event-tool';
 import { suggestActivitiesTool } from './tools/suggest-activities-tool';
 import { decideSuggestionTool } from './tools/decide-suggestion-tool';
 import { addSuggestionToScheduleTool } from './tools/add-suggestion-to-schedule-tool';
@@ -85,6 +87,7 @@ export const oriAgent = new Agent({
     anotarContextoViagem: noteTravelContextTool,
     atualizarContextoViagem: updateTravelContextTool,
     buscarSugestoes: getSuggestionsTool,
+    detalharEvento: detailEventTool,
     sugerirAtividades: suggestActivitiesTool,
     criarSugestao: createSuggestionTool,
     atualizarSugestao: updateSuggestionTool,
@@ -108,14 +111,6 @@ const PERIOD_LABELS: Record<string, string> = { morning: 'manhã', afternoon: 't
 
 function describeSlot(date: unknown, period: unknown): string {
   return `${date}, ${PERIOD_LABELS[String(period)] ?? period}`;
-}
-
-async function findScheduleEvent(tenantId: string, travelId: string, date: unknown, period: unknown, index: unknown): Promise<DailyScheduleEvent | null> {
-  const parsed = dailyScheduleSchema.safeParse((await getTravelSchedule(tenantId, travelId)).dailySchedule);
-  if (!parsed.success) return null;
-  const day = parsed.data.find((d) => d.date === date);
-  const events = day?.events[period as 'morning' | 'afternoon' | 'night'];
-  return (typeof index === 'number' && events?.[index]) || null;
 }
 
 // Pergunta de confirmação da tool call pausada (`requireApproval: true`), montada em código a partir
@@ -150,7 +145,10 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
     return `Confirma que quer adicionar "${args.title}" ao dia a dia (${describeSlot(args.date, args.period)})?`;
   }
   if (toolName === updateDailyScheduleEventTool.id || toolName === removeDailyScheduleEventTool.id) {
-    const event = await findScheduleEvent(tenantId, travelId, args.date, args.period, args.index);
+    const event =
+      typeof args.date === 'string' && typeof args.index === 'number'
+        ? await getDailyScheduleEvent(tenantId, travelId, args.date, args.period as SchedulePeriod, args.index)
+        : null;
     const what = event ? `"${event.title}" (${describeSlot(args.date, args.period)})` : `o evento de ${describeSlot(args.date, args.period)}`;
     if (toolName === removeDailyScheduleEventTool.id) return `Confirma que quer remover ${what} do dia a dia?`;
     const moveTo = args.newDate || args.newPeriod ? ` para ${describeSlot(args.newDate ?? args.date, args.newPeriod ?? args.period)}` : '';

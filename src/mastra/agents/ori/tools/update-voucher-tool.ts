@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { updateVoucherFields } from '../../../services/travel-db';
-import { triggerDailyScheduleUpdate } from './daily-schedule-trigger';
+import { triggerDailyScheduleUpdate } from '../../daily-schedule/daily-schedule-trigger';
 
 // "Atualizar Documento" — corrige/complementa um voucher já existente (title, content e/ou
 // ai_extracted_data) pelo doc_id. `tenant_id`/`travel_id`/`user_id` vêm do `requestContext`

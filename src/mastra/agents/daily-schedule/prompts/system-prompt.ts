@@ -1,6 +1,6 @@
 import type { VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../schema';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_DETAILS_GUIDE, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../event-format';
 
 const COMMON_RULES = `## Regras por tipo de voucher
 
@@ -11,12 +11,20 @@ const COMMON_RULES = `## Regras por tipo de voucher
 - "title": ${EVENT_TITLE_FORMAT}
 - "content": ${EVENT_CONTENT_FORMAT}
 
+## Detalhes por tipo de evento
+
+Traga no "content" todos os itens do tipo que o voucher tiver (itens "(do lugar)" também só se estiverem no voucher):
+
+${EVENT_DETAILS_GUIDE}
+
 ## Regras gerais
 
 - Antes de escrever qualquer evento, abra o voucher com a tool "openVoucher" — nunca invente ou complete informação que não veio de um voucher aberto. A lista de vouchers só tem id/tipo/título/resumo.
 - Todo evento tem "voucher_id": o id do voucher de onde ele veio.
 - Não chame "openVoucher" duas vezes para o mesmo id — reaproveite o que já abriu.
-- Um voucher pode cobrir vários dias — inclua o evento em TODOS os dias que ele cobre (ex: hospedagem com check-in dia 10 e check-out dia 15 gera evento nos dias 10, 11, 12, 13, 14 e 15), sem duplicar o mesmo dado como dois eventos no mesmo dia.
+- Todo voucher que dura vários dias gera evento só no início e no fim — nunca repita o voucher nos dias do meio (nada de "Hospedagem no hotel X" ou "Carro alugado" em cada dia). Hospedagem = "Check-in" e "Check-out"; aluguel de carro = "Retirada" e "Devolução"; cruzeiro = embarque e desembarque; circuito/passeio de vários dias = início e fim. Nos dias do meio, só gere evento se o voucher trouxer uma programação própria daquele dia (ex: a parada do cruzeiro, o roteiro do dia 2 do circuito). O código já mostra, nos dias do meio, onde o cliente está — pelo "place" dos eventos de início e fim.
+- "place": onde o evento acontece (nome do lugar e cidade). Preencha sempre que o voucher disser, principalmente nos eventos de início e fim de uma hospedagem ou aluguel.
+- Nunca duplique o mesmo dado como dois eventos no mesmo dia.
 - Período pelo horário local do voucher: morning = 00:00–11:59, afternoon = 12:00–17:59, night = 18:00–23:59. Sem horário, use o bom senso pelo tipo (check-out de manhã, jantar à noite) — mas nunca invente um horário no "content".
 - Se dois vouchers tocarem o mesmo acontecimento (confirmando ou contradizendo um dado), preencha "observation" citando de qual voucher vem cada informação. Caso contrário, null.
 - Devolva só os dias que têm pelo menos um evento, em ordem cronológica.

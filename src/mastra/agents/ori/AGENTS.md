@@ -64,7 +64,7 @@ o que fazer com isso — hoje provavelmente um botão/gatilho de "atualizar" que
 relevante (`GET /travel_agent/daily-schedule`, lista de vouchers, `travel-summary`, sugestões etc.),
 não uma mudança automática de UI aqui no backend.
 
-## As 20 tools — todas escopadas por `requestContext`
+## As 21 tools — todas escopadas por `requestContext`
 
 `tenant_id`/`travel_id`/`user_id` vêm sempre do `requestContext` (nunca de argumento que o model
 preenche, mesmo contrato de `agents/daily-schedule/tools/open-voucher-tool.ts`) — evita um voucher
@@ -78,11 +78,16 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   histórico da conversa que criou este agente: diferente de outras partes do sistema, aqui não há
   separação entre "dado extraído pela IA" e "correção humana"). Mesma regra de confirmação
   explícita numa mensagem seguinte antes de chamar, só na description da tool.
-- **`criarDocumento`** (`tools/create-voucher-tool.ts`) — cria um voucher a partir de uma
-  informação que o consultor digitou no chat (não upload). **Regra central, só na description da
-  tool**: nunca criar sem antes perguntar ao consultor se ele quer adicionar aquilo como voucher, e
-  só chamar depois que ele confirmar numa mensagem seguinte — por isso o agente precisa de memória
-  de conversa real (ver abaixo), não só do prompt da chamada atual.
+- **`criarDocumento`** (`tools/create-voucher-tool.ts`) — cria um voucher a partir de uma informação
+  que o consultor digitou no chat (não upload). O model só escreve o texto (`text`, tudo que o
+  consultor disse sobre a reserva); ele passa por `createExtractedVoucher` (`services/create-voucher.ts`),
+  a mesma função da rota `POST /travel_agent/extract/vouchers` — classifica o tipo e extrai
+  `ai_extracted_data` no schema daquele tipo. Antes o model montava `ai_extracted_data` sozinho (ou
+  deixava `null`), e o front, que monta a tela do voucher a partir desse campo, mostrava só título e
+  resumo. **Regra central, só na description da tool**: nunca criar sem antes perguntar ao consultor
+  se ele quer adicionar aquilo como voucher, e só chamar depois que ele confirmar numa mensagem
+  seguinte — por isso o agente precisa de memória de conversa real (ver abaixo), não só do prompt da
+  chamada atual.
 - **`deletarDocumento`** (`tools/delete-voucher-tool.ts`) — exclui um voucher por `doc_id`. Mesma
   regra de confirmação explícita antes de chamar (ação irreversível), só na description da tool.
 - **`buscarDiaADia`** (`tools/get-daily-schedule-tool.ts`) — sem `date`: índice enxuto da viagem
@@ -133,6 +138,11 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   `"rejected"`/`"all"` explicitamente, decisão pra não poluir a resposta com o que já foi recusado a
   menos que o consultor pergunte por isso. A lista vem enxuta (sem `content`); `suggestionId`
   devolve uma sugestão só, completa. Tool de leitura, sem regra de confirmação.
+- **`detalharEvento`** (`tools/detail-event-tool.ts`) — só leitura. Abre um evento do dia a dia
+  (date/period/index, via `getDailyScheduleEvent`) ou uma sugestão (`suggestionId`) e compara o
+  `content` com a lista de detalhes do tipo (`eventDetailGaps`, `daily-schedule/event-format.ts`):
+  devolve `filled`, `missing_from_place` (o Ori completa com o que sabe do lugar) e
+  `missing_from_booking` (o Ori pergunta ao consultor). A escrita vem depois, pelas tools de sempre.
 - **`sugerirAtividades`** (`tools/suggest-activities-tool.ts`) — gera novas sugestões pra um dia
   específico (`suggestDayActivities`, `agents/schedule-suggestion/suggest-day-activities.ts` — o
   mesmo agente/pipeline usado pela rota `POST /travel_agent/schedule-suggestion`, com validação e
@@ -166,6 +176,15 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   - **`removerSugestao`** (`tools/remove-suggestion-tool.ts`) — `removeSuggestion` (rota `DELETE
     /travel_agent/schedule-suggestion/decision`, o botão de apagar do histórico): apaga de vez e, se
     ela já estava aprovada, tira o evento dela do dia a dia na mesma transação (antes ficava órfão).
+
+## Detalhe dos cards
+
+Os cards que o Ori escreve (eventos e sugestões) seguem a mesma lista de detalhes por tipo que o
+gerador e o agente de sugestões (`EVENT_DETAILS`/`EVENT_DETAILS_GUIDE` em
+`daily-schedule/event-format.ts`, seção "## Detalhar eventos e sugestões" do prompt). Itens "do lugar"
+(endereço, duração, como chegar, preço médio, traje) o Ori completa, marcando o que é aproximado; itens
+"da reserva" (horário marcado, localizador, quem vai) ele pergunta ao consultor numa mensagem só antes
+de mostrar o texto final. Antes os cards do chat saíam só com o que o consultor tinha dito.
 
 ## Conversa x ação
 
@@ -218,11 +237,8 @@ Como isso aparece pro chamador (`askOri`/`ori-routes.ts`):
 Todas as três tools de escrita de voucher (criar/atualizar/excluir) disparam os mesmos gatilhos
 fire-and-forget de `routes/voucher-routes.ts` para manter `travel.daily_schedule` reagindo a
 qualquer mudança de voucher, não só às feitas pelo pipeline de extração automática — ver
-`tools/daily-schedule-trigger.ts` (`triggerDailyScheduleUpdate`/`triggerDailyScheduleRemoval`).
-Esse arquivo usa `console.error` em vez de `helpers/logger.ts` de propósito: é importado pelas
-tools do agente (dentro do bundle do Mastra), e `logger.ts` importa `mastra-instance.ts` de volta —
-encadear os dois criaria um ciclo real no grafo de módulos (`mastra dev` já mostrou esse warning
-antes desse ajuste).
+`agents/daily-schedule/daily-schedule-trigger.ts` (`triggerDailyScheduleUpdate`/
+`triggerDailyScheduleRemoval`), os mesmos usados pelas rotas.
 
 ## Memória de conversa (`session_id` -> thread)
 
@@ -243,9 +259,8 @@ não dependem disso — a pausa delas é resolvida pelo snapshot do próprio Mas
 
 ## Arquivos desta pasta
 
-- `ori-agent.ts` — `Agent` (`memory`, as 20 tools, `structuredOutput: oriResultSchema`) + `askOri`,
+- `ori-agent.ts` — `Agent` (`memory`, as 21 tools, `structuredOutput: oriResultSchema`) + `askOri`,
   chamado pela rota.
 - `schema.ts` — `oriResultSchema`.
 - `prompts/system-prompt.ts` — `buildOriInstructions` (texto fixo do prompt + lista de vouchers).
-- `tools/` — as 20 tools + `daily-schedule-trigger.ts` (gatilhos compartilhados de criar/atualizar/
-  excluir voucher).
+- `tools/` — as 21 tools.

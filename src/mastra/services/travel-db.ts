@@ -294,6 +294,20 @@ export async function insertScheduleEventWithClient(
   return normalized;
 }
 
+// UM evento do dia a dia pela posição (date, period, index) — `null` se não existir. Usado pela
+// tool `detalharEvento` e pelo texto de aprovação das tools do Ori que mexem num evento.
+export async function getDailyScheduleEvent(
+  tenantId: string,
+  travelId: string,
+  date: string,
+  period: 'morning' | 'afternoon' | 'night',
+  index: number,
+): Promise<DailyScheduleEvent | null> {
+  const parsed = dailyScheduleSchema.safeParse((await getTravelSchedule(tenantId, travelId)).dailySchedule);
+  if (!parsed.success) return null;
+  return parsed.data.find((d) => d.date === date)?.events[period][index] ?? null;
+}
+
 export async function insertDailyScheduleEvent(
   tenantId: string,
   travelId: string,
