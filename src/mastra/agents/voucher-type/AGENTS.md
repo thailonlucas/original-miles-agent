@@ -31,9 +31,13 @@ ver `services/travel-db.ts`.
 
 ## Tenant
 
-- `tenantId` é **obrigatório** e passado via `requestContext` (`RequestContext`, chave
-  `tenant_id`) — nunca por env var fixa (`instructions` chama
-  `requestContext.get('tenant_id')` e lança erro se não vier). Isso é diferente do padrão antigo
+- `tenantId` é **obrigatório** nas chamadas reais e passado via `requestContext`
+  (`RequestContext`, chave `tenant_id`) — nunca por env var fixa. `instructions` chama
+  `requestContext.get('tenant_id')`; se não vier (introspecção do Mastra sem contexto, ex.:
+  Studio/`formatAgentList` do endpoint `/api/agents`, que chama `getInstructions()` pra cada agente
+  registrado sem `tenant_id` nenhum), cai num prompt com a lista de tipos vazia em vez de lançar
+  erro — lançar erro ali gerava warning/alerta a cada listagem de agentes sem nenhuma classificação
+  real acontecer. Isso é diferente do padrão antigo
   de `agents/original-miles/` (tenant único via `LUNA_TENANT_ID`/`OM_TENANT_ID`): o schema real do
   Supabase (`voucher_type`, `voucher`, `travel`, `team`, `tenant`) é multi-tenant de verdade, com
   RLS por `tenant_id` resolvido a partir do usuário autenticado (ver `team.email = auth.jwt()->>'email'`

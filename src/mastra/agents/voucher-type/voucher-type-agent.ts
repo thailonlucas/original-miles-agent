@@ -11,12 +11,16 @@ export const voucherTypeAgent = new Agent({
   description: 'Classifica o tipo de um voucher de viagem (voo, hospedagem, transfer, seguro, etc.) a partir do documento enviado.',
   // Lista de tipos vem da tabela `voucher_type` (Supabase), escopada por tenant — refletindo
   // qualquer tipo novo cadastrado via o endpoint de CRUD de voucher_type sem precisar de deploy.
+  //
+  // Fallback (lista vazia) só é usado quando o Mastra introspecciona a lista de agentes sem
+  // requestContext (ex.: Studio/playground, endpoint /api/agents via `formatAgentList`) — nas
+  // chamadas reais, `classifyVoucherType`/`classifyVoucherTypeFromText` sempre passam `tenant_id`
+  // explicitamente. Lançar erro aqui virava um warning/alerta a cada listagem de agentes, mesmo
+  // sem nenhuma classificação real acontecer (mesmo padrão do fallback de `model` em
+  // `agents/voucher-extractor/extraction-agent.ts`).
   instructions: async ({ requestContext }) => {
     const tenantId = requestContext.get<string, string>('tenant_id');
-    if (!tenantId) {
-      throw new Error('voucher-type: requestContext "tenant_id" é obrigatório para classificar o voucher.');
-    }
-    const voucherTypes = await getActiveVoucherTypes(tenantId);
+    const voucherTypes = tenantId ? await getActiveVoucherTypes(tenantId) : [];
     return buildSystemPrompt(voucherTypes);
   },
   model: 'openai/gpt-4.1-mini',
