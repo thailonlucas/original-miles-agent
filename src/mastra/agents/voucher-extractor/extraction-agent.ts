@@ -18,16 +18,14 @@ export const voucherExtractionAgent = new Agent({
   id: 'voucher-extraction',
   name: 'Voucher Extraction',
   description: 'Extrai os dados estruturados de um voucher de viagem já classificado, usando o prompt e o JSON Schema cadastrados para o tipo (voucher_type).',
-  instructions: ({ requestContext }) => {
-    const prompt = requestContext.get<string, string>('extraction_prompt');
-    if (!prompt) {
-      throw new Error('voucher-extraction: requestContext "extraction_prompt" é obrigatório.');
-    }
-    return prompt;
-  },
-  // Fallback só é usado quando o Mastra introspecciona a lista de agentes/modelos sem
-  // requestContext (ex.: Studio/playground) — nas chamadas reais, `extractStructuredVoucherData`
-  // sempre passa `extraction_model` explicitamente, que tem prioridade sobre esse default.
+  // Fallback (string genérica) só é usado quando o Mastra introspecciona a lista de
+  // agentes/modelos sem requestContext (ex.: Studio/playground, `formatAgentList` do endpoint
+  // /api/agents) — nas chamadas reais, `extractStructuredVoucherData` sempre passa
+  // `extraction_prompt`/`extraction_model` explicitamente. Lançar erro aqui virava um
+  // warning/alerta a cada listagem de agentes, mesmo sem nenhuma extração real acontecendo (ver
+  // mesmo problema/fix em `agents/voucher-type/voucher-type-agent.ts`).
+  instructions: ({ requestContext }) =>
+    requestContext.get<string, string>('extraction_prompt') ?? 'Extraia os dados estruturados do voucher de viagem a partir do texto abaixo.',
   model: ({ requestContext }) => requestContext.get<string, string>('extraction_model') ?? 'openai/gpt-4.1-mini',
 });
 
