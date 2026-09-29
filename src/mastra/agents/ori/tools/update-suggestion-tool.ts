@@ -2,7 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { PREVIEW_BEFORE_WRITE } from './preview-rule';
 import { schedulePeriodSchema } from '../../schedule-suggestion/schema';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
 import { updatePendingSuggestion } from '../../../services/travel-db';
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -24,7 +24,7 @@ export const updateSuggestionTool = createTool({
       content: z
         .string()
         .optional()
-        .describe(`Novo conteúdo COMPLETO (substitui o atual — mantenha os itens que não mudaram), se mudar. ${EVENT_CONTENT_FORMAT}`),
+        .describe(`Novo conteúdo COMPLETO (substitui o atual — mantenha os itens que não mudaram), se mudar. ${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_SUGGESTION}`),
       type: z.string().optional().describe(`Nova categoria, se mudar. ${EVENT_TYPE_FORMAT}`),
       reason: z.string().optional().describe('Novo motivo da sugestão, se mudar.'),
       date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').optional().describe('Novo dia, se for mover.'),

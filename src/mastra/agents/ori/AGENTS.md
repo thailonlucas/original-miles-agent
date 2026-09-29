@@ -141,8 +141,8 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
 - **`detalharEvento`** (`tools/detail-event-tool.ts`) — só leitura. Abre um evento do dia a dia
   (date/period/index, via `getDailyScheduleEvent`) ou uma sugestão (`suggestionId`) e compara o
   `content` com a lista de detalhes do tipo (`eventDetailGaps`, `daily-schedule/event-format.ts`):
-  devolve `filled`, `missing_from_place` (o Ori completa com o que sabe do lugar) e
-  `missing_from_booking` (o Ori pergunta ao consultor). A escrita vem depois, pelas tools de sempre.
+  devolve `filled` e `missing` — o mínimo do tipo (o horário; "a confirmar" conta como falta), que o
+  Ori pergunta ao consultor, nunca completa sozinho. A escrita vem depois, pelas tools de sempre.
 - **`sugerirAtividades`** (`tools/suggest-activities-tool.ts`) — gera novas sugestões pra um dia
   específico (`suggestDayActivities`, `agents/schedule-suggestion/suggest-day-activities.ts` — o
   mesmo agente/pipeline usado pela rota `POST /travel_agent/schedule-suggestion`, com validação e
@@ -179,12 +179,15 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
 
 ## Detalhe dos cards
 
-Os cards que o Ori escreve (eventos e sugestões) seguem a mesma lista de detalhes por tipo que o
-gerador e o agente de sugestões (`EVENT_DETAILS`/`EVENT_DETAILS_GUIDE` em
-`daily-schedule/event-format.ts`, seção "## Detalhar eventos e sugestões" do prompt). Itens "do lugar"
-(endereço, duração, como chegar, preço médio, traje) o Ori completa, marcando o que é aproximado; itens
-"da reserva" (horário marcado, localizador, quem vai) ele pergunta ao consultor numa mensagem só antes
-de mostrar o texto final. Antes os cards do chat saíam só com o que o consultor tinha dito.
+Os cards que o Ori escreve (eventos e sugestões) seguem as MESMAS regras de escrita do gerador de
+vouchers e do agente de sugestões — `EVENT_FORMAT_GUIDE`/`EVENT_CONTENT_FORMAT` em
+`daily-schedule/event-format.ts`, seção "## Como escrever o conteúdo de um evento" do prompt: resumo
+curto, horário sempre na primeira linha, nada que repita o título. Muda só a fonte permitida:
+`EVENT_SOURCE_CHAT` (evento pedido pelo consultor: só o que ele disse + vouchers, nunca conhecimento
+geral) ou `EVENT_SOURCE_SUGGESTION` (ideia do Ori: pode descrever o lugar, horário marcado como
+sugerido). O Ori só pergunta o horário se faltar — antes pedia local/traje/quem vai e gravava
+"**Ocasião:** Casamento / **Local:** Lago Maggiore" num evento "Casamento no Lago Maggiore".
+`normalizeEventContent` ainda tira, na gravação, linhas cujo valor só repete o título.
 
 ## Conversa x ação
 

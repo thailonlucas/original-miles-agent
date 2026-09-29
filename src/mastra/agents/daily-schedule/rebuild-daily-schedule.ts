@@ -8,7 +8,7 @@ import {
   type VoucherSummary,
 } from '../../services/travel-db';
 import { buildVoucherEvents, buildVoucherSchedule } from './daily-schedule-agent';
-import { hasUntaggedEvents, keptEventsOnly, mergeDays, replaceVoucherEvents, scheduleRange, withoutVoucher } from './schedule-merge';
+import { hasUntaggedEvents, keepEditedTitles, keptEventsOnly, mergeDays, replaceVoucherEvents, scheduleRange, withoutVoucher } from './schedule-merge';
 import { dailyScheduleSchema, type DailyScheduleDay } from './schema';
 
 // Nunca gera evento — cobertura, não atividade agendada. Filtrado em código (não só no prompt) pra
@@ -32,7 +32,7 @@ export async function saveScheduleDays(tenantId: string, travelId: string, days:
 }
 
 // Refaz TODOS os eventos de voucher do zero e devolve eles junto com o que não veio de voucher
-// (sugestões aprovadas, eventos manuais), que passa intacto.
+// (sugestões aprovadas, eventos manuais), que passa intacto — assim como os títulos de dia editados à mão.
 export async function rebuildVoucherEvents(
   tenantId: string,
   travelId: string,
@@ -44,7 +44,8 @@ export async function rebuildVoucherEvents(
 
   const fromVouchers = vouchers.length > 0 ? await buildVoucherSchedule(vouchers, tenantId, summary) : { days: [], openedVoucherIds: [] };
 
-  return { days: mergeDays(fromVouchers.days, keptEventsOnly(currentDays), 'base'), openedVoucherIds: fromVouchers.openedVoucherIds };
+  const days = keepEditedTitles(currentDays, mergeDays(fromVouchers.days, keptEventsOnly(currentDays), 'base'));
+  return { days, openedVoucherIds: fromVouchers.openedVoucherIds };
 }
 
 // Voucher criado ou atualizado: tira os eventos antigos dele e gera os novos, no mesmo lugar que os

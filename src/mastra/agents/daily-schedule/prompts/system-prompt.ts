@@ -1,6 +1,6 @@
 import type { VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../schema';
-import { EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT, VOUCHER_EVENT_CONTENT_FORMAT, VOUCHER_EVENT_ESSENTIALS_GUIDE } from '../event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_VOUCHER, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../event-format';
 
 const COMMON_RULES = `## Regras por tipo de voucher
 
@@ -9,11 +9,13 @@ const COMMON_RULES = `## Regras por tipo de voucher
 - Para os demais tipos, gere evento sempre que houver uma data relevante no voucher.
 - "type": ${EVENT_TYPE_FORMAT} É o voucher_type_slug do voucher de origem.
 - "title": ${EVENT_TITLE_FORMAT}
-- "content": ${VOUCHER_EVENT_CONTENT_FORMAT}
+- "content": ${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_VOUCHER}
 
-## O essencial por tipo de evento
+## Como escrever o conteúdo de um evento
 
-${VOUCHER_EVENT_ESSENTIALS_GUIDE}
+${EVENT_FORMAT_GUIDE}
+
+${EVENT_SOURCE_VOUCHER}
 
 ## Regras gerais
 

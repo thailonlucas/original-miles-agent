@@ -2,7 +2,7 @@ import type { StoredSuggestion, VoucherSummary } from '../../../services/travel-
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
 import type { ScheduleSuggestionEvent, SchedulePeriod } from '../schema';
-import { EVENT_CONTENT_FORMAT, EVENT_DETAILS_GUIDE, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
 
 // Reaproveitados pelo prompt do validador (`prompts/validation-prompt.ts`) — mesmo contexto
 // (vouchers, outros dias, histórico de decisões) que o gerador já usa, pra avaliar as sugestões
@@ -93,9 +93,10 @@ ${profileSection}
 6. Preencha "reason" de cada sugestão com o motivo objetivo dela fazer sentido nesse dia/período (ex: "fica a 10 min a pé do ponto de encontro do passeio de barco já confirmado desta manhã", "restaurante do mesmo padrão dos outros já reservados na viagem", "opção kid-friendly já que há uma criança viajando", "no caminho do deslocamento entre as duas cidades deste dia").
 7. "type": ${EVENT_TYPE_FORMAT}
 7.1. "title": ${EVENT_TITLE_FORMAT}
-8. "content": ${EVENT_CONTENT_FORMAT} Endereço/região e duração podem ser aproximados — sugestões aprovadas são gravadas exatamente como um evento do dia a dia.
-8.1. Detalhes por tipo de evento — preencha TODOS os itens "(do lugar)" do tipo da sugestão (o que é, endereço, duração, como chegar a partir do hotel/evento anterior, preço médio, traje), com o que se sabe do lugar. Os outros itens (horário marcado, reserva, pessoas) só existem depois que o cliente reservar: não invente — no máximo "**Reserva:** recomendada" ou um horário sugerido marcado como sugestão.
-${EVENT_DETAILS_GUIDE}
+8. "content": ${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_SUGGESTION} Sugestões aprovadas são gravadas exatamente como um evento do dia a dia, então seguem as mesmas regras dos eventos que vêm dos vouchers.
+8.1. Como escrever o conteúdo de um evento:
+
+${EVENT_FORMAT_GUIDE}
 9. "observation" segue a mesma regra dos eventos do roteiro: normalmente null; preencha só se a sugestão precisar registrar algum conflito/ressalva em relação a um evento já confirmado.`;
 }
 

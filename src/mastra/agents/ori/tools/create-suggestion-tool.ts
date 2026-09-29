@@ -2,7 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { PREVIEW_BEFORE_WRITE } from './preview-rule';
 import { schedulePeriodSchema } from '../../schedule-suggestion/schema';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
 import { createPendingSuggestion } from '../../../services/travel-db';
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -22,7 +22,7 @@ export const createSuggestionTool = createTool({
     date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').describe('Dia da atividade.'),
     period: schedulePeriodSchema.describe('Período: "morning", "afternoon" ou "night".'),
     title: z.string().describe(EVENT_TITLE_FORMAT),
-    content: z.string().describe(`${EVENT_CONTENT_FORMAT} Endereço/região e duração podem ser aproximados, é uma sugestão.`),
+    content: z.string().describe(`${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_SUGGESTION}`),
     type: z.string().describe(EVENT_TYPE_FORMAT),
     reason: z.string().optional().describe('Por que essa atividade faz sentido pro cliente nesse dia/período.'),
   }),

@@ -7,17 +7,16 @@ import { getDailyScheduleEvent, getSuggestions } from '../../../services/travel-
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 // "Detalhar Evento" — só leitura. Abre UM evento do dia a dia (date/period/index) ou UMA sugestão
-// (suggestionId) e compara o conteúdo com a lista de detalhes do tipo dele (`eventDetailGaps`,
-// `daily-schedule/event-format.ts`): o que já tem e o que falta, separando o que o Ori pode completar
-// sozinho ("lugar") do que só o consultor sabe ("reserva"). A escrita vem depois, pelas tools de
+// (suggestionId) e compara o conteúdo com o mínimo do tipo dele (`eventDetailGaps`,
+// `daily-schedule/event-format.ts` — hoje, o horário): o que já tem e o que falta. O que falta o Ori
+// pergunta ao consultor — nunca completa com conhecimento geral. A escrita vem depois, pelas tools de
 // sempre (`atualizarEventoDiaADia`/`atualizarSugestao`), com prévia e aprovação.
 export const detailEventTool = createTool({
   id: 'detalharEvento',
   description:
-    'Mostra o que falta num evento do dia a dia (date/period/index) ou numa sugestão (suggestionId) pra ficar completo, pela lista ' +
-    'de detalhes do tipo dele. Use quando o consultor pedir pra detalhar/completar um evento ou sugestão, e antes de mostrar um ' +
-    'evento novo que tenha pouca informação. "missing_from_place": complete você com o que sabe do lugar (aproximado). ' +
-    '"missing_from_booking": pergunte ao consultor — nunca deduza.',
+    'Mostra o que falta num evento do dia a dia (date/period/index) ou numa sugestão (suggestionId): o mínimo do tipo dele (o ' +
+    'horário). Use quando o consultor pedir pra detalhar/completar um evento ou sugestão. "missing": pergunte ao consultor — nunca ' +
+    'deduza nem complete com conhecimento geral.',
   inputSchema: z
     .object({
       date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').optional().describe('Dia do evento no dia a dia.'),
@@ -45,8 +44,7 @@ export const detailEventTool = createTool({
     return {
       ...found,
       filled,
-      missing_from_place: missing.filter((d) => d.from === 'lugar').map((d) => d.label),
-      missing_from_booking: missing.filter((d) => d.from === 'reserva').map((d) => d.label),
+      missing,
     };
   },
 });

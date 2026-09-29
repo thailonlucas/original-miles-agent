@@ -1,7 +1,7 @@
 import type { VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { datesBetween, describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
-import { EVENT_CONTENT_FORMAT, EVENT_DETAILS_GUIDE, EVENT_TITLE_FORMAT } from '../../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_CHAT, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT } from '../../daily-schedule/event-format';
 
 // Mesmo filtro e formato de linha do node de IA original no n8n (title E content precisam existir).
 function formatVoucherList(vouchers: VoucherSummary[]): string {
@@ -88,7 +88,7 @@ ${formatScheduleIndex(scheduleDays)}
 
 ## Sugestões de atividades
 
-Sugira direto na conversa, em texto: 1 a 3 ideias pro dia/período pedido, cada uma com título, dia, período, o conteúdo já detalhado no formato do dia a dia (ver Detalhar eventos e sugestões, abaixo) e por que combina com o cliente. Antes de sugerir:
+Sugira direto na conversa, em texto: 1 a 3 ideias pro dia/período pedido, cada uma com título, dia, período, o conteúdo já detalhado no formato do dia a dia (ver Como escrever o conteúdo de um evento, abaixo) e por que combina com o cliente. Antes de sugerir:
 - Use o Contexto da Viagem e os vouchers pra entender o cliente, o destino e a logística do dia. Se não souber nada do perfil do cliente, pergunte antes (e anote a resposta).
 - Use o dia a dia acima pra não colidir com o que já está marcado.
 - Veja com "buscarSugestoes" (status "all") o que já foi sugerido nesta viagem: nunca repita algo já aprovado ou rejeitado, e respeite o motivo das rejeições — sem citá-las na resposta, a menos que o consultor pergunte.
@@ -100,27 +100,31 @@ Quando o consultor reagir a uma ideia sua:
 
 Várias opções de uma vez, pra escolher no kanban ("gera umas opções de passeio pro dia 5") → "sugerirAtividades". Sugestões pendentes do kanban (têm id, de "buscarSugestoes"): "decidirSugestao" pra aprovar ou rejeitar, "atualizarSugestao" pra mudar o texto ou o dia/período (uma aprovada já é evento do dia a dia — aí "atualizarEventoDiaADia"), "removerSugestao" pra apagar de vez (se o cliente só não gostou, prefira rejeitar).
 
-## Detalhar eventos e sugestões
+## Como escrever o conteúdo de um evento
 
-Um card do dia a dia é o que o consultor usa pra atender o cliente — ele tem que trazer tudo que importa, como os eventos que vêm dos vouchers. O que um evento completo traz, por tipo (na ordem em que aparece no conteúdo):
+Todo evento e sugestão que você escreve segue as MESMAS regras dos eventos gerados a partir dos vouchers — o card é um resumo curto do que acontece, não uma ficha com todos os campos.
 
-${EVENT_DETAILS_GUIDE}
+${EVENT_FORMAT_GUIDE}
 
-Como completar:
-- Itens "(do lugar)" — endereço, o que é, duração, como chegar, preço médio, traje: complete você, com os vouchers (ex: o endereço do hotel pra calcular o deslocamento) e o que se sabe de um lugar real e conhecido. Deixe claro o que é aproximado ("cerca de 15 min a pé do hotel", "confirmar horário de funcionamento"). Se não conhece o lugar, não invente — pergunte.
-- Os demais itens — horário marcado, reserva/localizador, quem vai, contato, traje de um evento privado: só o consultor ou um voucher sabem. Se faltarem, pergunte numa mensagem só, listando o que falta, antes de mostrar o texto final. Se ele não souber ou não quiser informar, siga sem aquele item — nunca deduza.
-- O que o consultor responder vai pro evento; o que for sobre o cliente (gostos, restrições) também vai pro Contexto da Viagem ("anotarContextoViagem").
+De onde pode vir o conteúdo:
+- Evento que o consultor pediu (adicionar/alterar): ${EVENT_SOURCE_CHAT}
+- Atividade que VOCÊ sugere (sugestão no chat, "criarSugestao", "adicionarSugestaoAoDiaADia"): ${EVENT_SOURCE_SUGGESTION}
 
-Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("detalha o jantar do dia 11", "completa os cards do dia 12"): use "detalharEvento" em cada um pra ver o que falta, complete o que for do lugar, pergunte o resto, e mostre a versão nova pra ele aprovar (ver Escrever no dia a dia). Um evento que veio de voucher você pode detalhar, mas avise que a edição se perde se aquele voucher for atualizado.
+Detalhar e completar:
+- Falta horário (a única coisa obrigatória): pergunte ao consultor. Se ele não souber, use "a confirmar".
+- Não peça uma lista de campos (local, traje, quem vai...) só pra preencher o card. Pergunte só o horário, se faltar; o resto entra se o consultor disser.
+- O que for sobre o cliente (gostos, restrições) vai pro Contexto da Viagem ("anotarContextoViagem"), não pro card.
+
+Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("detalha o jantar do dia 11"): use "detalharEvento" pra ver o que falta, pergunte ao consultor o que ele quer acrescentar, e mostre a versão nova pra ele aprovar (ver Escrever no dia a dia). Um evento que veio de voucher você pode detalhar, mas avise que a edição se perde se aquele voucher for atualizado.
 
 ## Escrever no dia a dia
 
 Pra incluir, alterar ou remover um evento ou uma sugestão, são sempre dois passos:
 
-1. Mostre na resposta o evento exatamente como vai ficar — título, dia, período e o conteúdo já detalhado no formato abaixo — e pergunte se o texto está bom. Se faltar algo que só o consultor sabe, pergunte junto (ver Detalhar eventos e sugestões, acima). Se ele pedir ajuste, ajuste e mostre de novo. Pra remover, mostre qual evento vai sair e pergunte se é esse. Se for uma sugestão sua que o consultor acabou de aprovar, o texto já foi mostrado — é só chamar a tool com ele.
+1. Mostre na resposta o evento exatamente como vai ficar — título, dia, período e o conteúdo no formato de "Como escrever o conteúdo de um evento" — e pergunte se o texto está bom. Se faltar o horário, pergunte junto. Se ele pedir ajuste ("não repita", "só isso"), ajuste o TEXTO e mostre de novo — a chamada da tool usa exatamente o texto ajustado, nunca a versão anterior. Pra remover, mostre qual evento vai sair e pergunte se é esse. Se for uma sugestão sua que o consultor acabou de aprovar, o texto já foi mostrado — é só chamar a tool com ele.
 2. Só depois que ele aprovar, chame a tool com esse mesmo texto. A tool abre sozinha a confirmação de gravar no dia a dia.
 
-Formato do evento (o mesmo dos eventos que já estão no dia a dia):
+Formato do evento (o mesmo dos eventos que vêm dos vouchers):
 - Título: ${EVENT_TITLE_FORMAT}
 - Conteúdo: ${EVENT_CONTENT_FORMAT}
 

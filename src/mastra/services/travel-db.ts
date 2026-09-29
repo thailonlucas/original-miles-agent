@@ -287,7 +287,7 @@ export async function insertScheduleEventWithClient(
   const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
   const days = parsed.success ? parsed.data : [];
 
-  const normalized: DailyScheduleEvent = { ...event, content: normalizeEventContent(event.content) };
+  const normalized: DailyScheduleEvent = { ...event, content: normalizeEventContent(event.content, event.title) };
   const newDays = insertEventIntoDays(days, date, period, normalized);
   const { travelStartAt, travelEndAt } = expandTravelRange(state.travelStartAt, state.travelEndAt, date);
   await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt, travelEndAt }, client);
@@ -356,7 +356,7 @@ export async function updateDailyScheduleEvent(
     const updatedEvent: DailyScheduleEvent = {
       ...current,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
-      ...(patch.content !== undefined ? { content: normalizeEventContent(patch.content) } : {}),
+      ...(patch.content !== undefined ? { content: normalizeEventContent(patch.content, patch.title ?? current.title) } : {}),
     };
 
     const targetDate = patch.newDate ?? date;
@@ -401,6 +401,36 @@ export async function updateDailyScheduleEvent(
     const { travelStartAt, travelEndAt } = expandTravelRange(state.travelStartAt, state.travelEndAt, targetDate);
     await saveTravelSchedule(tenantId, travelId, { dailySchedule: newDays, travelStartAt, travelEndAt }, client);
     return updatedEvent;
+  });
+}
+
+// Edita o título (subtítulo da coluna no kanban) de UM dia do roteiro. Marca `title_edited` pra que
+// nenhuma junção/reconstrução por voucher troque o título depois (ver `schedule-merge.ts`). `title`
+// vazio volta ao automático: título do primeiro evento do dia, sem a marca. `null` se o dia não
+// existir — o array é esparso, dia sem evento não tem título pra editar.
+export async function updateDailyScheduleDayTitle(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  date: string,
+  title: string,
+): Promise<DailyScheduleDay | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const state = await getTravelSchedule(tenantId, travelId, client);
+    const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+    if (!parsed.success) return null;
+
+    const day = parsed.data.find((d) => d.date === date);
+    if (!day) return null;
+
+    const trimmed = title.trim();
+    const { title_edited: _previousFlag, ...rest } = day;
+    const firstEvent = day.events.morning[0] ?? day.events.afternoon[0] ?? day.events.night[0];
+    const updatedDay: DailyScheduleDay = trimmed ? { ...rest, title: trimmed, title_edited: true } : { ...rest, title: firstEvent?.title ?? day.title };
+
+    const newDays = parsed.data.map((d) => (d === day ? updatedDay : d));
+    await saveTravelSchedule(tenantId, travelId, { ...state, dailySchedule: newDays }, client);
+    return updatedDay;
   });
 }
 
@@ -602,7 +632,7 @@ export async function createDecidedSuggestion(
       id: crypto.randomUUID(),
       date: input.date,
       period: input.period,
-      event: { ...input.event, content: normalizeEventContent(input.event.content) },
+      event: { ...input.event, content: normalizeEventContent(input.event.content, input.event.title) },
       reason: input.reason,
       status,
       feedback,
@@ -671,7 +701,7 @@ export async function createPendingSuggestion(tenantId: string, travelId: string
     id: crypto.randomUUID(),
     date: input.date,
     period: input.period,
-    event: { ...input.event, content: normalizeEventContent(input.event.content) },
+    event: { ...input.event, content: normalizeEventContent(input.event.content, input.event.title) },
     reason: input.reason,
     status: 'pending',
     feedback: null,
@@ -715,7 +745,7 @@ export async function updatePendingSuggestion(
       event: {
         ...current.event,
         ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.content !== undefined ? { content: normalizeEventContent(patch.content) } : {}),
+        ...(patch.content !== undefined ? { content: normalizeEventContent(patch.content, patch.title ?? current.event.title) } : {}),
         ...(patch.type !== undefined ? { type: patch.type } : {}),
       },
     };

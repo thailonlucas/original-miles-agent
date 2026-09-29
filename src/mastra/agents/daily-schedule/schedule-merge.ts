@@ -30,7 +30,8 @@ export function hasUntaggedEvents(days: DailyScheduleDay[]): boolean {
 }
 
 // Mantém só os eventos aprovados por `keep`, e tira da lista os dias que ficaram vazios (o array é
-// esparso). Se o título do dia era o de um evento removido, passa a ser o do primeiro que sobrou.
+// esparso). Se o título do dia era o de um evento removido, passa a ser o do primeiro que sobrou —
+// a não ser que o consultor tenha editado o título à mão (`title_edited`), que nunca muda sozinho.
 function filterEvents(days: DailyScheduleDay[], keep: (event: DailyScheduleEvent) => boolean): DailyScheduleDay[] {
   return days.flatMap((day) => {
     const events = {
@@ -42,7 +43,7 @@ function filterEvents(days: DailyScheduleDay[], keep: (event: DailyScheduleEvent
     if (remaining.length === 0) return [];
 
     const titleWasRemoved = allEvents(day).some((event) => !keep(event) && event.title === day.title);
-    return [{ ...day, title: titleWasRemoved ? remaining[0].title : day.title, events }];
+    return [{ ...day, title: titleWasRemoved && !day.title_edited ? remaining[0].title : day.title, events }];
   });
 }
 
@@ -68,7 +69,7 @@ export function toStoredDays(llmDays: VoucherScheduleDay[], forcedVoucherId?: st
   const days = llmDays.map((day) => {
     const convert = ({ voucher_id, ...event }: VoucherScheduleDay['events']['morning'][number]): DailyScheduleEvent => ({
       ...event,
-      content: normalizeEventContent(event.content),
+      content: normalizeEventContent(event.content, event.title),
       source: { type: 'voucher', voucher_id: forcedVoucherId ?? voucher_id },
     });
     return {
@@ -81,7 +82,8 @@ export function toStoredDays(llmDays: VoucherScheduleDay[], forcedVoucherId?: st
 }
 
 // Junta `incoming` em `base`, dia a dia (eventos entram no fim do período). `titleFrom` decide qual
-// título vale num dia que existe nos dois lados.
+// título vale num dia que existe nos dois lados — exceto se um dos lados tiver o título editado à mão
+// (`title_edited`), que sempre vence.
 export function mergeDays(base: DailyScheduleDay[], incoming: DailyScheduleDay[], titleFrom: 'base' | 'incoming'): DailyScheduleDay[] {
   const byDate = new Map(base.map((day) => [day.date, day]));
   for (const day of incoming) {
@@ -90,9 +92,11 @@ export function mergeDays(base: DailyScheduleDay[], incoming: DailyScheduleDay[]
       byDate.set(day.date, day);
       continue;
     }
+    const edited = existing.title_edited ? existing : day.title_edited ? day : null;
     byDate.set(day.date, {
       date: day.date,
-      title: titleFrom === 'incoming' ? day.title : existing.title,
+      title: edited ? edited.title : titleFrom === 'incoming' ? day.title : existing.title,
+      ...(edited ? { title_edited: true } : {}),
       events: {
         morning: [...existing.events.morning, ...day.events.morning],
         afternoon: [...existing.events.afternoon, ...day.events.afternoon],
@@ -101,6 +105,14 @@ export function mergeDays(base: DailyScheduleDay[], incoming: DailyScheduleDay[]
     });
   }
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Devolve `next` com os títulos editados à mão (`title_edited`) de `previous` de volta, nos dias que
+// continuam existindo — pra reconstrução do zero (`rebuildVoucherEvents`), em que os dias novos vêm
+// da LLM e o dia editado pode nem ter um evento mantido pra carregar o título.
+export function keepEditedTitles(previous: DailyScheduleDay[], next: DailyScheduleDay[]): DailyScheduleDay[] {
+  const edited = new Map(previous.filter((day) => day.title_edited).map((day) => [day.date, day.title]));
+  return next.map((day) => (edited.has(day.date) ? { ...day, title: edited.get(day.date)!, title_edited: true } : day));
 }
 
 // Insere UM evento num dia/período, criando o dia (na posição certa por data) se ele ainda não
@@ -128,7 +140,8 @@ export function insertEventIntoDays(
 // ocupavam: num dia/período em que o voucher já tinha evento, os novos entram na posição do primeiro
 // evento antigo dele — o consultor pode ter arrastado o card pra entre dois outros, e atualizar o
 // voucher não deve jogar ele pro fim. Dia/período em que o voucher não estava: vai pro fim (não há
-// posição a manter). O título dos dias tocados vem de `incoming`, como em `mergeDays(..., 'incoming')`.
+// posição a manter). O título dos dias tocados vem de `incoming`, como em `mergeDays(..., 'incoming')`
+// — menos nos dias com título editado à mão (`title_edited`).
 export function replaceVoucherEvents(days: DailyScheduleDay[], voucherId: string, incoming: DailyScheduleDay[]): DailyScheduleDay[] {
   const isFromVoucher = (event: DailyScheduleEvent) => {
     const origin = eventOrigin(event);
@@ -153,7 +166,7 @@ export function replaceVoucherEvents(days: DailyScheduleDay[], voucherId: string
         result = insertEventIntoDays(result, day.date, period, event, anchor === undefined ? undefined : anchor + i);
       });
     }
-    result = result.map((d) => (d.date === day.date ? { ...d, title: day.title } : d));
+    result = result.map((d) => (d.date === day.date && !d.title_edited ? { ...d, title: day.title } : d));
   }
   return result;
 }
@@ -203,7 +216,7 @@ export function addApprovedSuggestions(
     }
     result = insertEventIntoDays(result, s.date, s.period, {
       ...s.event,
-      content: normalizeEventContent(s.event.content),
+      content: normalizeEventContent(s.event.content, s.event.title),
       source: { type: 'suggestion', suggestion_id: s.id },
     });
     existing.add(key);

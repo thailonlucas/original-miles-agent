@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../daily-schedule/event-format';
 
 // Mesmo formato de um evento do daily_schedule (ver `agents/daily-schedule/schema.ts` ->
 // `dailyScheduleEventSchema`) + "reason", que existe só pra ajudar o usuário a decidir se aprova a
@@ -10,8 +10,7 @@ export const scheduleSuggestionEventSchema = z.object({
   content: z
     .string()
     .describe(
-      `${EVENT_CONTENT_FORMAT} Pra uma sugestão, endereço/região e duração são aproximados — ao ser aprovada, ela é gravada ` +
-        'exatamente como um evento do dia a dia.',
+      `${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_SUGGESTION} Ao ser aprovada, ela é gravada exatamente como um evento do dia a dia.`,
     ),
   type: z.string().describe(EVENT_TYPE_FORMAT),
   observation: z

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT, VOUCHER_EVENT_CONTENT_FORMAT } from './event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_VOUCHER, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from './event-format';
 
 // De onde veio um evento do dia a dia. É o que permite o código (e não a LLM) decidir o que fica
 // e o que sai quando um voucher muda: eventos de voucher são regerados/removidos pelo `voucher_id`;
@@ -14,7 +14,7 @@ export const dailyScheduleEventSourceSchema = z.discriminatedUnion('type', [
 
 const eventFields = {
   title: z.string().describe(EVENT_TITLE_FORMAT),
-  content: z.string().describe(`${EVENT_CONTENT_FORMAT} Use SOMENTE dados dos vouchers abertos.`),
+  content: z.string().describe(EVENT_CONTENT_FORMAT),
   type: z.string().describe(`${EVENT_TYPE_FORMAT} É o voucher_type_slug do voucher de origem.`),
   observation: z
     .string()
@@ -40,6 +40,10 @@ export const dailyScheduleEventSchema = z.object({
 export const dailyScheduleDaySchema = z.object({
   date: z.string().describe('YYYY-MM-DD'),
   title: z.string().describe('Frase curta resumindo o evento mais relevante deste dia.'),
+  // `true` quando o consultor editou o título do dia à mão (`updateDailyScheduleDayTitle`, kanban do
+  // front) — daí em diante nenhuma junção/reconstrução troca esse título (`schedule-merge.ts`). Só no
+  // formato gravado; a LLM nunca vê nem devolve.
+  title_edited: z.boolean().optional(),
   events: z.object({
     morning: z.array(dailyScheduleEventSchema).describe('Eventos entre 00:00 e 11:59.'),
     afternoon: z.array(dailyScheduleEventSchema).describe('Eventos entre 12:00 e 17:59.'),
@@ -56,7 +60,7 @@ export const dailyScheduleSchema = z.array(dailyScheduleDaySchema);
 // em `source` e junta com o resto do dia a dia (`schedule-merge.ts`).
 const voucherEventSchema = z.object({
   ...eventFields,
-  content: z.string().describe(`${VOUCHER_EVENT_CONTENT_FORMAT} Use SOMENTE dados dos vouchers abertos.`),
+  content: z.string().describe(`${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_VOUCHER}`),
   place: z
     .string()
     .nullable()

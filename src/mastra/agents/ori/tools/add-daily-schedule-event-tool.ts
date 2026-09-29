@@ -2,7 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { PREVIEW_BEFORE_WRITE } from './preview-rule';
 import { schedulePeriodSchema } from '../../schedule-suggestion/schema';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_CHAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
 import { insertDailyScheduleEvent } from '../../../services/travel-db';
 
 const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -22,7 +22,7 @@ export const addDailyScheduleEventTool = createTool({
     date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').describe('Dia do evento.'),
     period: schedulePeriodSchema.describe('Período: "morning" (00:00–11:59), "afternoon" (12:00–17:59) ou "night" (18:00–23:59).'),
     title: z.string().describe(EVENT_TITLE_FORMAT),
-    content: z.string().describe(`${EVENT_CONTENT_FORMAT} Use só o que o consultor informou na conversa.`),
+    content: z.string().describe(`${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_CHAT}`),
     type: z.string().describe(`${EVENT_TYPE_FORMAT} Na dúvida, "other".`),
   }),
   outputSchema: z.unknown(),

@@ -23,7 +23,12 @@ import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-s
 import { oriAgent } from './agents/ori/ori-agent';
 import { voucherExtractRoute, voucherDeleteRoute, voucherListRoute, voucherUpdateRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute, dailyScheduleGetRoute } from './routes/daily-schedule-routes';
-import { dailyScheduleEventCreateRoute, dailyScheduleEventDeleteRoute, dailyScheduleEventUpdateRoute } from './routes/daily-schedule-event-routes';
+import {
+  dailyScheduleDayUpdateRoute,
+  dailyScheduleEventCreateRoute,
+  dailyScheduleEventDeleteRoute,
+  dailyScheduleEventUpdateRoute,
+} from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
 import { oriChatRoute, oriApprovalRoute, oriSessionListRoute, oriSessionGetRoute } from './routes/ori-routes';
 import { skillListRoute, skillCreateRoute, skillUpdateRoute } from './routes/skill-routes';
@@ -83,6 +88,7 @@ export const mastra = new Mastra({
       dailyScheduleEventUpdateRoute,
       dailyScheduleEventCreateRoute,
       dailyScheduleEventDeleteRoute,
+      dailyScheduleDayUpdateRoute,
       oriChatRoute,
       oriApprovalRoute,
       oriSessionListRoute,

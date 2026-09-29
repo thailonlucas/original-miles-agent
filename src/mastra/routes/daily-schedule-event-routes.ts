@@ -6,6 +6,7 @@ import {
   getTenantIdByTravelId,
   insertDailyScheduleEvent,
   removeDailyScheduleEvent,
+  updateDailyScheduleDayTitle,
   updateDailyScheduleEvent,
 } from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
@@ -185,5 +186,36 @@ export const dailyScheduleEventDeleteRoute = registerApiRoute('/travel_agent/dai
       return c.json({ error: 'not_found', message: 'Evento não encontrado nesse dia/período/índice.' }, 404);
     }
     return c.json({ removed: true }, 200);
+  },
+});
+
+const dayTitleBodySchema = z.object({
+  travel_id: z.string().min(1),
+  date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD'),
+  // Vazio = volta ao título automático (o do primeiro evento do dia).
+  title: z.string().max(200),
+});
+
+export const dailyScheduleDayUpdateRoute = registerApiRoute('/travel_agent/daily-schedule/day', {
+  method: 'PATCH',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Edita o título (subtítulo da coluna no kanban) de um dia do roteiro',
+    description:
+      'Recebe `travel_id`, `date` e `title`. O título editado fica marcado (`title_edited: true`) e não é trocado quando o dia a ' +
+      'dia é atualizado por voucher ou regenerado. `title` vazio volta ao automático (título do primeiro evento do dia). ' +
+      'Devolve o dia atualizado; 404 se o dia não tiver nenhum evento (dias vazios não são gravados).',
+    tags: ['Daily Schedule'],
+  },
+  handler: async (c) => {
+    const auth = await authorizeEventRequest(c, dayTitleBodySchema);
+    if (auth instanceof Response) return auth;
+    const { tenantId, userId, body } = auth;
+
+    const updated = await updateDailyScheduleDayTitle(tenantId, body.travel_id, userId, body.date, body.title);
+    if (!updated) {
+      return c.json({ error: 'not_found', message: `Dia ${body.date} não encontrado no dia a dia (sem eventos).` }, 404);
+    }
+    return c.json(updated, 200);
   },
 });

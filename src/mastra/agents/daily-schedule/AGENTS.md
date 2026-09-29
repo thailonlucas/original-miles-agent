@@ -68,6 +68,13 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
 - Array **esparso**: só dias com pelo menos um evento. O front preenche os dias vazios entre o
   primeiro e o último ("Dia livre", `fillDailyScheduleGaps` no front), então o kanban continua
   mostrando a viagem inteira.
+- O título do dia (subtítulo da coluna no kanban) pode ser editado à mão
+  (`PATCH /travel_agent/daily-schedule/day` → `updateDailyScheduleDayTitle`, `services/travel-db.ts`).
+  O dia fica com `title_edited: true` e nenhuma junção troca mais esse título: nem a atualização por
+  voucher (`replaceVoucherEvents`, `mergeDays`), nem a remoção de evento (`filterEvents`), nem a
+  reconstrução do zero (`keepEditedTitles` em `rebuildVoucherEvents`). Título vazio volta ao
+  automático (primeiro evento do dia) e tira a marca. Se o dia ficar sem eventos, ele sai da lista e o
+  título editado vai junto.
 - `travel_start_at`/`travel_end_at` = primeiro e último dia com evento (`scheduleRange`),
   recalculados a cada escrita — encolhem quando um voucher sai.
 - A ordem dos eventos dentro de um período é a cronologia (eventos não têm horário estruturado).
@@ -106,18 +113,18 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
 
 - `schema.ts` — formato gravado (`dailyScheduleSchema`, com `source`) e formato da LLM
   (`voucherScheduleResultSchema`, com `voucher_id`).
-- `event-format.ts` — formato único de `title`/`content`/`type` de um evento, usado pelo gerador, pelas
-  sugestões (`agents/schedule-suggestion/`) e pelas tools do Ori que incluem/alteram eventos — um evento
-  gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara. Mude o formato só aqui. Também tem `EVENT_DETAILS` (o que um evento completo traz,
-  por tipo, e quem pode preencher cada item: "reserva" ou "lugar"), `EVENT_DETAILS_GUIDE` (a lista em
-  texto, nos prompts de sugestões e do Ori) e `eventDetailGaps` (o que falta num evento — tool `detalharEvento` do Ori).
-  Eventos de voucher usam um `content` próprio, curto (`VOUCHER_EVENT_CONTENT_FORMAT` +
-  `VOUCHER_EVENT_ESSENTIALS_GUIDE`), sem repetir título/`place` nem o que já está no voucher (endereço,
-  telefone, localizador). Logísticos (voo, hotel, transfer, carro, balsa): 1–3 rótulos (horários,
-  aeroportos, regime). Experiências (passeio, restaurante, other): horário + parágrafo curto do que
-  acontece + linhas `**Dica:**`/`**Logística:**`/`**Atenção:**`. Todo evento começa pelo horário ("a confirmar"
-  se o voucher não tiver). Nada fora do voucher: sem duração/deslocamento estimados, sem conhecimento
-  geral do lugar, sem dados do resumo da viagem.
+- `event-format.ts` — as regras de escrita de TODO evento (gerador, sugestões, tools do Ori): um evento
+  gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara e as mesmas regras. Mude só
+  aqui. `EVENT_CONTENT_FORMAT` (resumo) + `EVENT_FORMAT_GUIDE` (guia completo): o card é um resumo do
+  que acontece, sem repetir título/`place` nem o que já está no voucher (endereço, telefone,
+  localizador). Logísticos (voo, hotel, transfer, carro, balsa): 1–3 rótulos (horários, aeroportos,
+  regime). Experiências (passeio, restaurante, other): horário + parágrafo curto + linhas
+  `**Dica:**`/`**Logística:**`/`**Atenção:**`. Todo evento começa pelo horário ("a confirmar" se a
+  fonte não tiver); nada de duração/deslocamento estimados. Cada caminho junta a sua fonte permitida:
+  `EVENT_SOURCE_VOUCHER` (gerador), `EVENT_SOURCE_CHAT` (Ori, evento pedido pelo consultor),
+  `EVENT_SOURCE_SUGGESTION` (sugestões). `EVENT_DETAILS`/`eventDetailGaps` = o mínimo por tipo (o
+  horário), pra tool `detalharEvento`. `normalizeEventContent(content, title)` roda em toda gravação:
+  quebra de linha do markdown + tira linhas cujo valor só repete o título (rede de segurança).
 - `schedule-merge.ts` — funções puras de junção (`withoutVoucher`, `replaceVoucherEvents`, `keptEventsOnly`, `mergeDays`,
   `toStoredDays`, `insertEventIntoDays`, `scheduleRange`, `hasUntaggedEvents`).
 - `daily-schedule-agent.ts` — o `Agent` + `buildVoucherSchedule` (do zero) e `buildVoucherEvents`
