@@ -1,7 +1,17 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
 import { askOri, decideOriToolCall } from '../agents/ori/ori-agent';
-import { getTenantIdByEmail, getTenantIdByTravelId } from '../services/travel-db';
+import { randomUUID } from 'node:crypto';
+import type { OriResponse } from '../agents/ori/schema';
+import {
+  appendOriChatMessages,
+  getOriChatSession,
+  getTenantIdByEmail,
+  getTenantIdByTravelId,
+  listOriChatSessions,
+  recordOriApprovalDecision,
+  type OriChatMessage,
+} from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { logConversationError } from '../helpers/logger';
 import { parseOrBadRequest } from './validate';
@@ -22,6 +32,21 @@ async function resolveTenantId(authorizationHeader: string | undefined | null): 
 // Corta um prompt absurdamente longo em vez de rejeitar — mesmo raciocínio de
 // `schedule-suggestion-routes.ts`, mas com limite maior (mensagem de chat, não um pedido curto).
 const MAX_PROMPT_LENGTH = 4000;
+
+// Quantas sessões anteriores o drawer do chat lista pra retomar (`GET /travel_agent/ori/sessions`).
+const RECENT_SESSIONS_LIMIT = 5;
+
+// Bolha de resposta do Ori no formato do histórico (`ori_chat_session`), com o `tool_call_id` do
+// cartão de aprovação quando a resposta pausou — é por ele que a decisão é registrada depois.
+function assistantHistoryMessage(result: OriResponse): OriChatMessage {
+  return {
+    id: randomUUID(),
+    role: 'assistant',
+    raw: JSON.stringify(result),
+    ...(result.pending_approval ? { tool_call_id: result.pending_approval.tool_call_id } : {}),
+    created_at: new Date().toISOString(),
+  };
+}
 
 export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
   method: 'POST',
@@ -82,6 +107,17 @@ export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
 
     try {
       const result = await askOri(tenantId, travelId, userId, sessionId, prompt);
+      // Histórico é best-effort: uma falha ao gravar não pode derrubar a resposta que o Ori já gerou
+      // (e cujas tools de escrita já rodaram).
+      const now = new Date().toISOString();
+      await appendOriChatMessages(
+        tenantId,
+        travelId,
+        userId,
+        sessionId,
+        [{ id: randomUUID(), role: 'user', content: prompt, created_at: now }, assistantHistoryMessage(result)],
+        prompt,
+      ).catch((error) => logConversationError(travelId, `Ori: falha ao gravar histórico (session_id ${sessionId})`, error));
       return c.json(result, 200);
     } catch (error) {
       logConversationError(travelId, `Ori: falha ao gerar resposta (session_id ${sessionId})`, error);
@@ -95,6 +131,9 @@ const approvalBodySchema = z.object({
   run_id: z.string().min(1),
   tool_call_id: z.string().min(1),
   approved: z.boolean(),
+  // Sessão do chat onde o cartão de aprovação apareceu — quando vem, a decisão e a resposta
+  // seguinte entram no histórico dela (`ori_chat_session`). Opcional pra não quebrar clientes antigos.
+  session_id: z.string().min(1).optional(),
   // Só relevante quando `approved: false` — motivo que o consultor deu pra recusar, devolvido ao
   // model no lugar do resultado da tool (ver `declineToolCallGenerate` do Mastra).
   reason: z.string().max(500).optional(),
@@ -109,13 +148,15 @@ export const oriApprovalRoute = registerApiRoute('/travel_agent/ori/approval', {
       'Recebe `travel_id`, `run_id`/`tool_call_id` (do `pending_approval` de uma resposta anterior de `POST /travel_agent/ori`), `approved` e ' +
       '`reason` opcional (quando recusado). Devolve o MESMO envelope de `POST /travel_agent/ori` — se aprovada, a tool roda de ' +
       'verdade e a resposta final do Ori vem preenchida; se recusada, o model recebe o motivo e responde sem executar a tool. Pode ' +
-      'vir com um novo `pending_approval` se o model encadear outra tool sensível em seguida.',
+      'vir com um novo `pending_approval` se o model encadear outra tool sensível em seguida. `session_id` opcional grava a decisão e a ' +
+      'resposta no histórico da sessão (ver `GET /travel_agent/ori/sessions`).',
     tags: ['Ori'],
   },
   handler: async (c) => {
     let tenantId: string;
+    let userId: string;
     try {
-      ({ tenantId } = await resolveTenantId(c.req.header('Authorization')));
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -134,10 +175,92 @@ export const oriApprovalRoute = registerApiRoute('/travel_agent/ori/approval', {
 
     try {
       const result = await decideOriToolCall(tenantId, body.travel_id, body.run_id, body.tool_call_id, body.approved, body.reason);
+      if (body.session_id) {
+        await recordOriApprovalDecision(
+          tenantId,
+          body.travel_id,
+          userId,
+          body.session_id,
+          body.tool_call_id,
+          body.approved ? 'approved' : 'rejected',
+          assistantHistoryMessage(result),
+        ).catch((error) => logConversationError(body.travel_id, `Ori: falha ao gravar decisão no histórico (session_id ${body.session_id})`, error));
+      }
       return c.json(result, 200);
     } catch (error) {
       logConversationError(body.run_id, `Ori: falha ao ${body.approved ? 'aprovar' : 'recusar'} tool call ${body.tool_call_id}`, error);
       return c.json({ error: 'ori_approval_failed', message: error instanceof Error ? error.message : String(error) }, 500);
     }
+  },
+});
+
+export const oriSessionListRoute = registerApiRoute('/travel_agent/ori/sessions', {
+  method: 'GET',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Lista as últimas sessões de chat do Ori do usuário autenticado numa viagem',
+    description:
+      `Query: \`travel_id\`. Devolve \`{ sessions }\` com as ${RECENT_SESSIONS_LIMIT} sessões mais recentes (por última mensagem) do ` +
+      'consultor autenticado nesta viagem: `session_id`, `title` (primeiro prompt), `message_count`, `created_at`, `updated_at`. ' +
+      'Pra retomar uma, busque as mensagens em `GET /travel_agent/ori/sessions/:sessionId` e continue mandando o mesmo `session_id` ' +
+      'em `POST /travel_agent/ori` — a memória do agente é a mesma thread.',
+    tags: ['Ori'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    let userId: string;
+    try {
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const travelId = c.req.query('travel_id');
+    if (!travelId) {
+      return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
+    }
+
+    const sessions = await listOriChatSessions(tenantId, travelId, userId, RECENT_SESSIONS_LIMIT);
+    return c.json({ sessions }, 200);
+  },
+});
+
+export const oriSessionGetRoute = registerApiRoute('/travel_agent/ori/sessions/:sessionId', {
+  method: 'GET',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Busca a transcrição de uma sessão de chat do Ori, pra retomar a conversa',
+    description:
+      'Query: `travel_id`. Devolve a sessão com `messages` no formato que o drawer renderiza: `{ role: "user", content }` ou ' +
+      '`{ role: "assistant", raw, tool_call_id?, approval_decision? }` — `raw` é o envelope de `POST /travel_agent/ori` serializado ' +
+      '(pode trazer `pending_approval`; `approval_decision` diz se o cartão já foi decidido). 404 se a sessão não for do usuário autenticado.',
+    tags: ['Ori'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    let userId: string;
+    try {
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const travelId = c.req.query('travel_id');
+    if (!travelId) {
+      return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
+    }
+
+    const sessionId = c.req.param('sessionId');
+    const session = await getOriChatSession(tenantId, travelId, userId, sessionId);
+    if (!session) {
+      return c.json({ error: 'not_found', message: `Sessão ${sessionId} não encontrada.` }, 404);
+    }
+    return c.json(session, 200);
   },
 });

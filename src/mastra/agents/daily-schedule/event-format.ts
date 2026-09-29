@@ -20,6 +20,69 @@ export const EVENT_CONTENT_FORMAT =
   '**Traje:** black tie\n' +
   'Nunca invente uma informação que não foi dada.';
 
+// Só pro gerador a partir de vouchers (`prompts/system-prompt.ts`, `schema.ts`). O card de um evento
+// de voucher é um resumo do que acontece — o voucher continua anexo com endereço, telefone,
+// localizador, passageiros etc., então repetir isso no card só deixava o texto longo e igual ao PDF.
+// Dois formatos: evento logístico (voo, hotel, transfer...) é dado de consulta rápida, em rótulos;
+// experiência (passeio, restaurante, evento) é contada num parágrafo curto — em rótulos virava
+// "Experiência: X / Local: X" repetindo o título.
+// Sugestões e eventos do chat não têm voucher por trás e seguem com o formato completo acima.
+export const VOUCHER_EVENT_CONTENT_FORMAT =
+  'Markdown curto, resumo do que vai acontecer — nunca uma cópia do voucher. Siga o formato do tipo (lista "O essencial por tipo de evento"). ' +
+  'Nunca repita no "content" o que já está no "title" ou no "place" (nome da experiência, do restaurante, do hotel, do lugar) — ' +
+  'nem numa linha própria ("Experiência: ...", "Local: ...") nem dentro das frases. ' +
+  'A primeira linha é SEMPRE o horário. Tudo no "content" sai do voucher aberto — nada de conhecimento geral sobre o lugar, ' +
+  'nada deduzido, nada do "Resumo geral da viagem".';
+
+// O essencial de um evento de voucher, por tipo — o que o cliente precisa saber pra viver aquele
+// momento. Tudo que não está aqui fica no voucher.
+export const VOUCHER_EVENT_ESSENTIALS_GUIDE = [
+  '### Eventos logísticos — flight, accommodation, transfer, car_rental, ferry_boat',
+  '',
+  'De 1 a 3 linhas "**Rótulo:** valor", com valores enxutos (sem frases). A primeira linha é a do horário. Só estes itens:',
+  '- flight: Embarque (horário + aeroporto de partida), Chegada (horário + aeroporto de chegada, e "dia seguinte" se mudar o dia), Conexão (só se houver: aeroporto e horário).',
+  '- accommodation: Check-in / Check-out (horário), Regime (só no check-in, ex: "café da manhã incluso").',
+  '- transfer: Busca (horário + ponto de encontro), Destino (só se não estiver no título).',
+  '- car_rental: Retirada / Devolução (horário), Carro (só na retirada: categoria ou modelo).',
+  '- ferry_boat: Embarque (horário + porto), Chegada (horário + porto).',
+  '',
+  'Exemplo (voo "Voo TP 0082 São Paulo → Lisboa"):',
+  '**Embarque:** 22h40 em Guarulhos (GRU)',
+  '**Chegada:** 11h05 em Lisboa (LIS), dia seguinte',
+  '',
+  '### Experiências — experience, restaurant_reservation, other',
+  '',
+  'Nesta ordem (o horário sempre; as outras partes só se o voucher tiver o dado):',
+  '1. "**Horário:** 12h30" — sempre (ou "**Horário:** 9h, encontro no lobby do hotel").',
+  '2. Um parágrafo de 1 a 3 frases, sem rótulo, contando o que acontece e o que torna o momento especial. Comece pelo que acontece, não pelo nome (o nome já está no título).',
+  '3. Linhas "**Dica:**", "**Logística:**" ou "**Atenção:**" — só para o que muda o que o cliente faz (traje, levar algo, alternativa em caso de chuva, quem vai). Uma frase cada, sem repetir o parágrafo.',
+  '',
+  'Exemplo (title "Almoço musical Metzelive no Metzelet", place "Metzelet, Cervinia"):',
+  '**Horário:** 12h30',
+  '',
+  'Almoço especial com apresentação ao vivo de artistas locais. Com tempo bom, a música acontece na varanda com vista para o Cervino e as Grandes Murailles; com mau tempo, no salão do restaurante.',
+  '',
+  '**Logística:** Julia e Carlos podem interromper o esqui no dia para almoçar com Maria.',
+  '',
+  'Errado (repete o título e o lugar em rótulos): "**Experiência:** Metzelive — almoço musical semanal" / "**Local:** Metzelet".',
+  '',
+  '### Horário',
+  '',
+  'Todo evento tem horário na primeira linha, exatamente como está no voucher (horário local). Procure no voucher inteiro antes de desistir. ' +
+    'Se o voucher não trouxer horário nenhum, escreva o rótulo do tipo com "a confirmar" (ex: "**Horário:** a confirmar", "**Check-in:** a confirmar") — nunca estime um.',
+  '',
+  '### Só o que está no voucher',
+  '',
+  'Cada frase do "content" precisa estar apoiada no voucher aberto. Nunca assuma nem estime: duração ("cerca de 2h"), horário, ' +
+    'distância/tempo de deslocamento, o que o lugar tem ou oferece, clima, traje, preço. Se o voucher não diz, não entra. ' +
+    'O "Resumo geral da viagem" é só contexto — nada dele vai pro "content".',
+  '',
+  '### Nunca no "content"',
+  '',
+  'Endereço, telefone/contato, localizador/código de reserva, número de quarto, políticas de cancelamento, valores pagos, ' +
+    'franquia de bagagem ou qualquer texto institucional — isso já está no voucher. Sem um dado, omita a linha (nunca escreva "não informado") — a única exceção é o horário, que vira "a confirmar".',
+].join('\n');
+
 export const EVENT_TYPE_FORMAT =
   'Categoria do evento: flight, accommodation, transfer, restaurant_reservation, car_rental, ferry_boat, experience ou other.';
 

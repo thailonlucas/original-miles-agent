@@ -8,7 +8,7 @@ import {
   type VoucherSummary,
 } from '../../services/travel-db';
 import { buildVoucherEvents, buildVoucherSchedule } from './daily-schedule-agent';
-import { hasUntaggedEvents, keptEventsOnly, mergeDays, scheduleRange, withoutVoucher } from './schedule-merge';
+import { hasUntaggedEvents, keptEventsOnly, mergeDays, replaceVoucherEvents, scheduleRange, withoutVoucher } from './schedule-merge';
 import { dailyScheduleSchema, type DailyScheduleDay } from './schema';
 
 // Nunca gera evento — cobertura, não atividade agendada. Filtrado em código (não só no prompt) pra
@@ -47,8 +47,9 @@ export async function rebuildVoucherEvents(
   return { days: mergeDays(fromVouchers.days, keptEventsOnly(currentDays), 'base'), openedVoucherIds: fromVouchers.openedVoucherIds };
 }
 
-// Voucher criado ou atualizado: tira os eventos antigos dele e gera os novos — o resto do dia a
-// dia (outros vouchers, sugestões, eventos manuais) não passa pela LLM e não muda.
+// Voucher criado ou atualizado: tira os eventos antigos dele e gera os novos, no mesmo lugar que os
+// antigos ocupavam — o resto do dia a dia (outros vouchers, sugestões, eventos manuais) não passa
+// pela LLM e não muda.
 export async function updateDailyScheduleForVoucher(tenantId: string, travelId: string, voucher: VoucherSummary, userId: string): Promise<void> {
   await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const currentDays = await readScheduleDays(tenantId, travelId, client);
@@ -71,7 +72,9 @@ export async function updateDailyScheduleForVoucher(tenantId: string, travelId: 
     const summary = await getTravelSummary(tenantId, travelId, client);
     const newEvents = await buildVoucherEvents(voucher.id, withoutThisVoucher, vouchers, tenantId, summary);
 
-    await saveScheduleDays(tenantId, travelId, mergeDays(withoutThisVoucher, newEvents, 'incoming'), client);
+    // `currentDays` (não `withoutThisVoucher`): é dele que sai a posição que os eventos do voucher
+    // ocupavam — eles voltam pro mesmo lugar em vez de ir pro fim do período.
+    await saveScheduleDays(tenantId, travelId, replaceVoucherEvents(currentDays, voucher.id, newEvents), client);
   });
 }
 

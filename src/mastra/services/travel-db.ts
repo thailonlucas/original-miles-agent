@@ -903,3 +903,105 @@ export async function updateVoucherFields(
   );
   return rows[0] ?? null;
 }
+
+// --- Histórico do chat do Ori (tabela `ori_chat_session`, ver `sql/ori_chat_session.sql`) ---
+// Transcrição no formato que o drawer do front renderiza, não no formato interno do Mastra Memory.
+// Toda leitura/escrita é escopada por tenant + viagem + usuário: cada consultor só vê as próprias
+// sessões.
+
+export type OriChatMessage =
+  | { id: string; role: 'user'; content: string; created_at: string }
+  | {
+      id: string;
+      role: 'assistant';
+      // Envelope `OriResponse` serializado, igual ao corpo que `POST /travel_agent/ori` devolve.
+      raw: string;
+      // Só presente quando a resposta pausou num `pending_approval` — usado pra achar o cartão ao
+      // registrar a decisão (`recordOriApprovalDecision`).
+      tool_call_id?: string;
+      approval_decision?: 'approved' | 'rejected';
+      created_at: string;
+    };
+
+export interface OriChatSessionSummary {
+  session_id: string;
+  title: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OriChatSession extends OriChatSessionSummary {
+  messages: OriChatMessage[];
+}
+
+const ORI_CHAT_TITLE_MAX = 120;
+
+// Acrescenta mensagens no fim da sessão, criando a linha na primeira mensagem (o título vira o
+// primeiro prompt). O `where` do upsert impede que um `session_id` reaproveitado por outro
+// tenant/usuário escreva numa sessão que não é dele.
+export async function appendOriChatMessages(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  sessionId: string,
+  messages: OriChatMessage[],
+  title: string,
+): Promise<void> {
+  await getPool().query(
+    `insert into ori_chat_session (tenant_id, travel_id, session_id, user_id, title, messages)
+     values ($1, $2, $3, $4, $5, $6::jsonb)
+     on conflict (travel_id, session_id) do update
+       set messages = ori_chat_session.messages || excluded.messages, updated_at = now()
+       where ori_chat_session.tenant_id = excluded.tenant_id and ori_chat_session.user_id = excluded.user_id`,
+    [tenantId, travelId, sessionId, userId, title.slice(0, ORI_CHAT_TITLE_MAX), JSON.stringify(messages)],
+  );
+}
+
+// Marca a decisão no cartão de aprovação (`tool_call_id`) e acrescenta a resposta seguinte do
+// Ori, numa única escrita.
+export async function recordOriApprovalDecision(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  sessionId: string,
+  toolCallId: string,
+  decision: 'approved' | 'rejected',
+  reply: OriChatMessage,
+): Promise<void> {
+  await getPool().query(
+    `update ori_chat_session
+     set messages = coalesce(
+           (select jsonb_agg(
+                     case when elem->>'tool_call_id' = $5 then elem || jsonb_build_object('approval_decision', $6::text) else elem end
+                     order by ord)
+            from jsonb_array_elements(messages) with ordinality as t(elem, ord)),
+           '[]'::jsonb
+         ) || $7::jsonb,
+         updated_at = now()
+     where tenant_id = $1 and travel_id = $2 and user_id = $3 and session_id = $4`,
+    [tenantId, travelId, userId, sessionId, toolCallId, decision, JSON.stringify([reply])],
+  );
+}
+
+export async function listOriChatSessions(tenantId: string, travelId: string, userId: string, limit: number): Promise<OriChatSessionSummary[]> {
+  const { rows } = await getPool().query<OriChatSessionSummary>(
+    `select session_id, title, jsonb_array_length(messages)::int as message_count, created_at, updated_at
+     from ori_chat_session
+     where tenant_id = $1 and travel_id = $2 and user_id = $3
+     order by updated_at desc
+     limit $4`,
+    [tenantId, travelId, userId, limit],
+  );
+  return rows;
+}
+
+export async function getOriChatSession(tenantId: string, travelId: string, userId: string, sessionId: string): Promise<OriChatSession | null> {
+  const { rows } = await getPool().query<OriChatSession>(
+    `select session_id, title, messages, jsonb_array_length(messages)::int as message_count, created_at, updated_at
+     from ori_chat_session
+     where tenant_id = $1 and travel_id = $2 and user_id = $3 and session_id = $4`,
+    [tenantId, travelId, userId, sessionId],
+  );
+  return rows[0] ?? null;
+}

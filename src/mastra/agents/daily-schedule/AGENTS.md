@@ -47,6 +47,9 @@ Todos dentro de `withTravelScheduleLock` (serializa escritas da mesma viagem, ve
   disparado por `routes/voucher-routes.ts` e pelas tools de voucher do Ori. Tira os eventos antigos
   daquele voucher (`withoutVoucher`) e pede à LLM só os eventos DELE (`buildVoucherEvents`), com o
   resto do dia a dia como contexto só de leitura. Os outros vouchers não passam pela LLM de novo.
+  Os eventos novos voltam pra posição que os antigos ocupavam no mesmo dia/período
+  (`replaceVoucherEvents`), em vez de irem pro fim — mantém a ordem que o consultor arrumou no kanban.
+  Dia/período em que o voucher ainda não tinha evento: vai pro fim.
 - **Voucher excluído** — `removeVoucherFromDailySchedule`: só remove os eventos daquele
   `voucher_id`. **Sem chamada de IA.**
 - **Gerar sob demanda** — `generateDailySchedule` (`generate-daily-schedule.ts`): refaz TODOS os
@@ -79,6 +82,14 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   pela LLM; linhas antigas caem no nome tirado do título). Usado pelo índice do prompt do Ori, por
   `buscarDiaADia` e pelo resumo do agente de sugestões/validador. O front tem a mesma regra
   (`ongoingStays` em `daily-schedule/utils.ts`) e mostra no cabeçalho do dia ("Hospedado em ...").
+- Voo de madrugada (partida 00:00–05:59) ganha um evento a mais na noite do dia anterior ("Ida ao
+  aeroporto — Voo X às 3h10"): o dia do cliente começa na véspera. Voo que chega em outro dia (noturno,
+  longo) ganha um evento "Chegada do voo X em Y" no dia da chegada. Os dois têm o mesmo `voucher_id` do
+  voo, então somem junto com ele. Regra só no prompt (`COMMON_RULES`) — o voucher não tem horário
+  estruturado pro código conferir.
+- `date` que a LLM devolve é validado (`YYYY-MM-DD` e dia existente, `voucherScheduleResultSchema`).
+  O formato gravado não valida, de propósito: uma linha antiga com data ruim faria `readScheduleDays`
+  tratar o dia a dia inteiro como vazio.
 - Um evento por voucher: se dois vouchers descrevem o mesmo acontecimento (ex: o mesmo voo), cada um
   tem o seu evento, com `observation` apontando o outro. Assim excluir um voucher nunca leva junto
   informação que veio de outro.
@@ -99,8 +110,15 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   sugestões (`agents/schedule-suggestion/`) e pelas tools do Ori que incluem/alteram eventos — um evento
   gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara. Mude o formato só aqui. Também tem `EVENT_DETAILS` (o que um evento completo traz,
   por tipo, e quem pode preencher cada item: "reserva" ou "lugar"), `EVENT_DETAILS_GUIDE` (a lista em
-  texto, nos três prompts) e `eventDetailGaps` (o que falta num evento — tool `detalharEvento` do Ori).
-- `schedule-merge.ts` — funções puras de junção (`withoutVoucher`, `keptEventsOnly`, `mergeDays`,
+  texto, nos prompts de sugestões e do Ori) e `eventDetailGaps` (o que falta num evento — tool `detalharEvento` do Ori).
+  Eventos de voucher usam um `content` próprio, curto (`VOUCHER_EVENT_CONTENT_FORMAT` +
+  `VOUCHER_EVENT_ESSENTIALS_GUIDE`), sem repetir título/`place` nem o que já está no voucher (endereço,
+  telefone, localizador). Logísticos (voo, hotel, transfer, carro, balsa): 1–3 rótulos (horários,
+  aeroportos, regime). Experiências (passeio, restaurante, other): horário + parágrafo curto do que
+  acontece + linhas `**Dica:**`/`**Logística:**`/`**Atenção:**`. Todo evento começa pelo horário ("a confirmar"
+  se o voucher não tiver). Nada fora do voucher: sem duração/deslocamento estimados, sem conhecimento
+  geral do lugar, sem dados do resumo da viagem.
+- `schedule-merge.ts` — funções puras de junção (`withoutVoucher`, `replaceVoucherEvents`, `keptEventsOnly`, `mergeDays`,
   `toStoredDays`, `insertEventIntoDays`, `scheduleRange`, `hasUntaggedEvents`).
 - `daily-schedule-agent.ts` — o `Agent` + `buildVoucherSchedule` (do zero) e `buildVoucherEvents`
   (um voucher).

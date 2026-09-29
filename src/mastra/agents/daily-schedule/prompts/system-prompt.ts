@@ -1,6 +1,6 @@
 import type { VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay } from '../schema';
-import { EVENT_CONTENT_FORMAT, EVENT_DETAILS_GUIDE, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../event-format';
+import { EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT, VOUCHER_EVENT_CONTENT_FORMAT, VOUCHER_EVENT_ESSENTIALS_GUIDE } from '../event-format';
 
 const COMMON_RULES = `## Regras por tipo de voucher
 
@@ -9,13 +9,11 @@ const COMMON_RULES = `## Regras por tipo de voucher
 - Para os demais tipos, gere evento sempre que houver uma data relevante no voucher.
 - "type": ${EVENT_TYPE_FORMAT} É o voucher_type_slug do voucher de origem.
 - "title": ${EVENT_TITLE_FORMAT}
-- "content": ${EVENT_CONTENT_FORMAT}
+- "content": ${VOUCHER_EVENT_CONTENT_FORMAT}
 
-## Detalhes por tipo de evento
+## O essencial por tipo de evento
 
-Traga no "content" todos os itens do tipo que o voucher tiver (itens "(do lugar)" também só se estiverem no voucher):
-
-${EVENT_DETAILS_GUIDE}
+${VOUCHER_EVENT_ESSENTIALS_GUIDE}
 
 ## Regras gerais
 
@@ -25,10 +23,24 @@ ${EVENT_DETAILS_GUIDE}
 - Todo voucher que dura vários dias gera evento só no início e no fim — nunca repita o voucher nos dias do meio (nada de "Hospedagem no hotel X" ou "Carro alugado" em cada dia). Hospedagem = "Check-in" e "Check-out"; aluguel de carro = "Retirada" e "Devolução"; cruzeiro = embarque e desembarque; circuito/passeio de vários dias = início e fim. Nos dias do meio, só gere evento se o voucher trouxer uma programação própria daquele dia (ex: a parada do cruzeiro, o roteiro do dia 2 do circuito). O código já mostra, nos dias do meio, onde o cliente está — pelo "place" dos eventos de início e fim.
 - "place": onde o evento acontece (nome do lugar e cidade). Preencha sempre que o voucher disser, principalmente nos eventos de início e fim de uma hospedagem ou aluguel.
 - Nunca duplique o mesmo dado como dois eventos no mesmo dia.
-- Período pelo horário local do voucher: morning = 00:00–11:59, afternoon = 12:00–17:59, night = 18:00–23:59. Sem horário, use o bom senso pelo tipo (check-out de manhã, jantar à noite) — mas nunca invente um horário no "content".
+- Período pelo horário local do voucher: morning = 00:00–11:59, afternoon = 12:00–17:59, night = 18:00–23:59. Sem horário, use o bom senso pelo tipo (check-out de manhã, jantar à noite) — mas nunca invente um horário no "content" (sem horário no voucher, "a confirmar").
 - Se dois vouchers tocarem o mesmo acontecimento (confirmando ou contradizendo um dado), preencha "observation" citando de qual voucher vem cada informação. Caso contrário, null.
 - Devolva só os dias que têm pelo menos um evento, em ordem cronológica.
-- Um "Resumo geral da viagem" (se houver) é só contexto do perfil do cliente — nunca cria evento.`;
+- Um "Resumo geral da viagem" (se houver) é só contexto do perfil do cliente — nunca cria evento.
+
+## Voos de madrugada e voos que chegam em outro dia
+
+Estas duas regras são as únicas exceções a "nunca duplique": o voo continua sendo UM evento no dia e período da partida, e cada regra abaixo acrescenta um evento a mais, com o mesmo "voucher_id" e o mesmo "type" do evento do voo. Em voo com conexão, aplique a regra de madrugada à partida do primeiro trecho e a de chegada à chegada do último — nunca às conexões do meio.
+
+- Voo de madrugada — partida entre 00:00 e 05:59 (horário local da partida): o dia do cliente começa no dia ANTERIOR, porque ele precisa se preparar e ir pro aeroporto na noite antes. Gere, além do voo, um evento na "night" do dia anterior à partida:
+  - "title": "Ida ao aeroporto — Voo TP 0824 às 3h10" (voo e horário de partida do voucher).
+  - "content": só "**Embarque:** 3h10 em Guarulhos (GRU)" (horário e aeroporto de partida).
+  - "place": o aeroporto de partida.
+- Voo que chega em outro dia — data de chegada (horário local da chegada) diferente da data de partida, ex: voo noturno ou longo: gere, além do voo, um evento no dia da chegada, no período do horário de chegada:
+  - "title": "Chegada do voo TP 0824 em Milão Malpensa".
+  - "content": só "**Chegada:** 11h05 em Milão Malpensa (MXP)" (horário e aeroporto de chegada).
+  - "place": o aeroporto de chegada.
+- Só aplique quando o voucher trouxer o horário (madrugada) ou a data/hora de chegada (outro dia) — sem o dado, não deduza.`;
 
 function formatVoucherList(vouchers: VoucherSummary[]): string {
   return JSON.stringify(

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from './event-format';
+import { EVENT_CONTENT_FORMAT, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT, VOUCHER_EVENT_CONTENT_FORMAT } from './event-format';
 
 // De onde veio um evento do dia a dia. É o que permite o código (e não a LLM) decidir o que fica
 // e o que sai quando um voucher muda: eventos de voucher são regerados/removidos pelo `voucher_id`;
@@ -56,6 +56,7 @@ export const dailyScheduleSchema = z.array(dailyScheduleDaySchema);
 // em `source` e junta com o resto do dia a dia (`schedule-merge.ts`).
 const voucherEventSchema = z.object({
   ...eventFields,
+  content: z.string().describe(`${VOUCHER_EVENT_CONTENT_FORMAT} Use SOMENTE dados dos vouchers abertos.`),
   place: z
     .string()
     .nullable()
@@ -65,8 +66,21 @@ const voucherEventSchema = z.object({
   voucher_id: z.string().describe('id do voucher (da lista de vouchers) de onde este evento veio.'),
 });
 
+// Data que a LLM devolve: formato YYYY-MM-DD e um dia que existe no calendário (nada de "2026-02-30"
+// ou "2026-10-05T10:00"). Só na saída da LLM — no formato gravado uma data ruim numa linha antiga faria
+// `readScheduleDays` tratar o dia a dia inteiro como vazio.
+const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const llmDateSchema = z
+  .string()
+  .regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD')
+  .refine((date) => {
+    const parsed = new Date(`${date}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+  }, 'data inexistente no calendário')
+  .describe('YYYY-MM-DD');
+
 const voucherDaySchema = z.object({
-  date: z.string().describe('YYYY-MM-DD'),
+  date: llmDateSchema,
   title: z.string().describe('Frase curta resumindo o evento mais relevante deste dia.'),
   events: z.object({
     morning: z.array(voucherEventSchema).describe('Eventos entre 00:00 e 11:59.'),

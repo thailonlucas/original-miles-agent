@@ -124,6 +124,40 @@ export function insertEventIntoDays(
   return mergeDays(days, [newDay], 'base');
 }
 
+// Troca os eventos de UM voucher pelos novos (`incoming`, já só dele) mantendo o lugar que eles
+// ocupavam: num dia/período em que o voucher já tinha evento, os novos entram na posição do primeiro
+// evento antigo dele — o consultor pode ter arrastado o card pra entre dois outros, e atualizar o
+// voucher não deve jogar ele pro fim. Dia/período em que o voucher não estava: vai pro fim (não há
+// posição a manter). O título dos dias tocados vem de `incoming`, como em `mergeDays(..., 'incoming')`.
+export function replaceVoucherEvents(days: DailyScheduleDay[], voucherId: string, incoming: DailyScheduleDay[]): DailyScheduleDay[] {
+  const isFromVoucher = (event: DailyScheduleEvent) => {
+    const origin = eventOrigin(event);
+    return origin.kind === 'voucher' && origin.voucherId === voucherId;
+  };
+  const slot = (date: string, period: SchedulePeriod) => `${date}|${period}`;
+
+  // Índice do primeiro evento do voucher = quantos eventos que ficam vêm antes dele.
+  const anchors = new Map<string, number>();
+  for (const day of days) {
+    for (const period of PERIODS) {
+      const index = day.events[period].findIndex(isFromVoucher);
+      if (index >= 0) anchors.set(slot(day.date, period), index);
+    }
+  }
+
+  let result = withoutVoucher(days, voucherId);
+  for (const day of incoming) {
+    for (const period of PERIODS) {
+      const anchor = anchors.get(slot(day.date, period));
+      day.events[period].forEach((event, i) => {
+        result = insertEventIntoDays(result, day.date, period, event, anchor === undefined ? undefined : anchor + i);
+      });
+    }
+    result = result.map((d) => (d.date === day.date ? { ...d, title: day.title } : d));
+  }
+  return result;
+}
+
 interface ApprovedSuggestionLike {
   id: string;
   date: string;
