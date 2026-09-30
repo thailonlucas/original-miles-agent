@@ -211,6 +211,12 @@ cliente continua no Contexto da Viagem. Rotas em `routes/ori-memory-routes.ts`.
 
 ## Conversa x ação
 
+Sem oferta de próximo passo no fim da resposta ("Quer que eu verifique...?", "Posso também...?"): a
+resposta termina na recomendação/conclusão, e o consultor pede o próximo passo. Pergunta no fim só
+quando falta informação pra concluir o pedido ou na confirmação do texto antes de gravar. Pesquisa na
+internet segue a mesma lógica: só quando ele pede ou pergunta um fato que muda com o tempo — nunca
+pra recomendar/comparar nem oferecida no fim.
+
 O prompt ("## Como conversar") separa três tipos de escrita:
 
 - **Automáticas, sem perguntar** — o que o consultor CONTA fica registrado na hora:

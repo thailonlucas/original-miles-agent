@@ -11,9 +11,10 @@ export const internetSearchTool = createTool({
   id: 'pesquisarNaInternet',
   requireApproval: true,
   description:
-    'Pesquisa na internet uma informação atual que NÃO está nos vouchers, no Contexto da Viagem nem no dia a dia — horário de ' +
-    'funcionamento, se um lugar ainda existe, eventos na cidade numa data, regras de entrada, clima da época. O consultor aprova ' +
-    'antes de a busca rodar. Não use pra algo que você já sabe responder com os dados da viagem. No "query", NUNCA coloque nome, ' +
+    'Pesquisa na internet um fato atual que NÃO está nos vouchers, no Contexto da Viagem nem no dia a dia. Use só quando o consultor ' +
+    'pedir pesquisa ou perguntar diretamente um fato que muda com o tempo (horário de funcionamento, se abre em tal dia, evento numa ' +
+    'data, regra de entrada). NÃO use pra recomendar, comparar ou opinar — nem pra "confirmar" antes de recomendar: responda com o que ' +
+    'já sabe. O consultor aprova antes de a busca rodar. No "query", NUNCA coloque nome, ' +
     'documento, contato ou qualquer dado do cliente — só o assunto (ex: "horário de funcionamento Cenacolo Vinciano Milão setembro 2026").',
   inputSchema: z.object({
     query: z.string().min(3).max(200).describe('O que pesquisar, sem dado do cliente. Específico: lugar, cidade e data quando fizer diferença.'),
