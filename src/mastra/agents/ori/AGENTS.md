@@ -189,6 +189,16 @@ sugerido). O Ori só pergunta o horário se faltar — antes pedia local/traje/q
 "**Ocasião:** Casamento / **Local:** Lago Maggiore" num evento "Casamento no Lago Maggiore".
 `normalizeEventContent` ainda tira, na gravação, linhas cujo valor só repete o título.
 
+## Pesquisa na internet
+
+`pesquisarNaInternet` (`tools/web-search-tool.ts`, `requireApproval: true`): o cartão
+(`webSearchApprovalQuestion` em `ori-agent.ts`) mostra o termo e avisa, em quatro linhas, que só o
+termo sai daqui, que volta um resumo com fontes, que a internet pode estar errada e a checagem é do
+consultor, e que nada muda na viagem. Só depois do "sim" o `execute` chama o agente `web-research`
+(`agents/web-research/`), que tem a busca nativa da OpenAI (`webSearchTool` do Mastra) + `webFetchTool`.
+A busca nativa NUNCA vai direto nas tools do Ori: ela roda do lado do provedor e escaparia da
+aprovação. Resultado da internet não entra em card do dia a dia, a menos que o consultor peça.
+
 ## Memória do consultor e do tenant
 
 O Ori lembra, entre sessões e viagens, como cada consultor gosta de trabalhar — ver

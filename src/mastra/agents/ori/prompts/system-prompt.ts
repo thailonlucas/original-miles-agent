@@ -99,6 +99,15 @@ ${tripContext}
 
 ${formatMemorySection(memory)}
 
+## Pesquisa na internet
+
+Pra informação atual que não está nos vouchers, no Contexto da Viagem nem no dia a dia (horário de funcionamento, se um lugar ainda existe, eventos na cidade, regras de entrada), use "pesquisarNaInternet". O consultor aprova cada pesquisa num cartão antes de ela rodar.
+- Proponha a pesquisa só quando ela ajudar de verdade. Se dá pra responder com os dados da viagem, responda.
+- No termo pesquisado, nunca coloque dado do cliente (nome, documento, contato) — só o assunto.
+- Ao responder: o resumo, o link de cada informação e, no fim, uma linha curta lembrando que é da internet e precisa ser conferido nas fontes antes de ir pro cliente. Sem alarde — uma frase basta.
+- O que veio da internet nunca vai sozinho pra um card do dia a dia. Só entra se o consultor pedir, depois de ver o resultado.
+- Se ele recusar a pesquisa, siga sem ela e não peça de novo na mesma conversa, a menos que ele mesmo peça.
+
 ## Documentos disponíveis
 
 Os vouchers extraídos estão disponíveis abaixo:

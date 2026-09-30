@@ -29,6 +29,7 @@ import { rejectChatSuggestionTool } from './tools/reject-chat-suggestion-tool';
 import { noteTravelContextTool } from './tools/note-travel-context-tool';
 import { noteUserPreferenceTool } from './tools/note-user-preference-tool';
 import { forgetUserPreferenceTool } from './tools/forget-user-preference-tool';
+import { internetSearchTool } from './tools/web-search-tool';
 import { getTenantRules, getUserMemory } from '../../services/ori-memory-db';
 
 // Memória de conversa por sessão (thread) — sem ela, a confirmação pedida antes de criar um
@@ -100,6 +101,7 @@ export const oriAgent = new Agent({
     adicionarSugestaoAoDiaADia: addSuggestionToScheduleTool,
     anotarPreferenciaConsultor: noteUserPreferenceTool,
     esquecerPreferencia: forgetUserPreferenceTool,
+    pesquisarNaInternet: internetSearchTool,
   },
   memory: oriMemory,
   defaultOptions: {
@@ -122,6 +124,20 @@ function describeSlot(date: unknown, period: unknown): string {
 // dos `args` que o model decidiu passar — a geração está pausada, a LLM ainda não escreveu nada.
 // Sempre diz O QUÊ vai ser feito (a sugestão pelo nome, o dia e o período), nunca só "esta
 // sugestão", pro consultor não aprovar no escuro.
+// Texto do cartão de aprovação da pesquisa na internet. É a última coisa que o consultor lê antes de
+// decidir, então diz em poucas linhas: o que vai sair daqui (só o termo), o que volta (resumo com
+// fontes) e o que ele precisa fazer (conferir antes de repassar).
+function webSearchApprovalQuestion(query: string): string {
+  return [
+    `Posso pesquisar na internet: "${query}"?`,
+    '',
+    '• Só esse termo vai para o buscador — nada do cliente.',
+    '• Eu trago um resumo com o link de cada informação.',
+    '• A internet pode estar desatualizada ou errada: confira nas fontes antes de repassar ao cliente. A checagem fica com você.',
+    '• Nada é alterado na viagem.',
+  ].join('\n');
+}
+
 async function describePendingApproval(tenantId: string, travelId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
   if (toolName === decideSuggestionTool.id) {
     const suggestion = (await getSuggestions(tenantId, travelId)).find((s) => s.id === args.suggestionId);
@@ -162,6 +178,9 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
   }
   if (toolName === updateTravelContextTool.id) {
     return args.summary ? "Confirma que quer reescrever o Contexto da Viagem com o texto acima?" : "Confirma que quer apagar todo o Contexto da Viagem?";
+  }
+  if (toolName === internetSearchTool.id) {
+    return webSearchApprovalQuestion(String(args.query ?? ''));
   }
   if (toolName === generateDailyScheduleTool.id) {
     return 'Confirma que quer regenerar o dia a dia a partir de todos os vouchers? Sugestões aprovadas são mantidas, mas edições feitas à mão em eventos de voucher são refeitas.';

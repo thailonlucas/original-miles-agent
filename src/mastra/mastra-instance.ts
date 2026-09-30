@@ -22,6 +22,7 @@ import { dailyScheduleAgent } from './agents/daily-schedule/daily-schedule-agent
 import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-suggestion-agent';
 import { oriAgent } from './agents/ori/ori-agent';
 import { oriMemoryLearnerAgent } from './agents/ori-memory-learner/ori-memory-learner-agent';
+import { webResearchAgent } from './agents/web-research/web-research-agent';
 import { voucherExtractRoute, voucherDeleteRoute, voucherListRoute, voucherUpdateRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute, dailyScheduleGetRoute } from './routes/daily-schedule-routes';
 import {
@@ -85,6 +86,7 @@ export const mastra = new Mastra({
     scheduleSuggestionAgent,
     oriAgent,
     oriMemoryLearnerAgent,
+    webResearchAgent,
   },
   server: {
     // As rotas de travel_agent/* usam o access_token do Supabase Auth do usuário (requiresAuth:
