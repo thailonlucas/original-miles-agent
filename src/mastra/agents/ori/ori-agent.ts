@@ -272,3 +272,11 @@ export async function decideOriToolCall(
 
   return finalizeOriOutput(tenantId, travelId, output);
 }
+
+// Apaga a thread de memória da sessão (mesmo id montado em `askOri`) quando o consultor exclui a
+// conversa do histórico — sem isso, o `session_id` apagado ainda carregaria o contexto antigo.
+// `getMemory()` em vez de `oriMemory` direto: é a instância com o storage que o Mastra injeta.
+export async function deleteOriSessionMemory(travelId: string, sessionId: string): Promise<void> {
+  const memory = await oriAgent.getMemory();
+  await memory?.deleteThread(`${travelId}:${sessionId}`);
+}

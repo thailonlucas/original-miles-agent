@@ -1,10 +1,11 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
-import { askOri, decideOriToolCall } from '../agents/ori/ori-agent';
+import { askOri, decideOriToolCall, deleteOriSessionMemory } from '../agents/ori/ori-agent';
 import { randomUUID } from 'node:crypto';
 import type { OriResponse } from '../agents/ori/schema';
 import {
   appendOriChatMessages,
+  deleteOriChatSession,
   getOriChatSession,
   getTenantIdByEmail,
   getTenantIdByTravelId,
@@ -34,8 +35,16 @@ async function resolveTenantId(authorizationHeader: string | undefined | null): 
 // `schedule-suggestion-routes.ts`, mas com limite maior (mensagem de chat, não um pedido curto).
 const MAX_PROMPT_LENGTH = 4000;
 
-// Quantas sessões anteriores o drawer do chat lista pra retomar (`GET /travel_agent/ori/sessions`).
+// Tamanho padrão/máximo da página de sessões anteriores que o drawer lista pra retomar
+// (`GET /travel_agent/ori/sessions`, "ver mais" pede a próxima com `offset`).
 const RECENT_SESSIONS_LIMIT = 5;
+const MAX_SESSIONS_LIMIT = 50;
+
+const sessionListQuerySchema = z.object({
+  travel_id: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(MAX_SESSIONS_LIMIT).default(RECENT_SESSIONS_LIMIT),
+  offset: z.coerce.number().int().min(0).default(0),
+});
 
 // Bolha de resposta do Ori no formato do histórico (`ori_chat_session`), com o `tool_call_id` do
 // cartão de aprovação quando a resposta pausou — é por ele que a decisão é registrada depois.
@@ -203,8 +212,10 @@ export const oriSessionListRoute = registerApiRoute('/travel_agent/ori/sessions'
   openapi: {
     summary: 'Lista as últimas sessões de chat do Ori do usuário autenticado numa viagem',
     description:
-      `Query: \`travel_id\`. Devolve \`{ sessions }\` com as ${RECENT_SESSIONS_LIMIT} sessões mais recentes (por última mensagem) do ` +
-      'consultor autenticado nesta viagem: `session_id`, `title` (primeiro prompt), `message_count`, `created_at`, `updated_at`. ' +
+      `Query: \`travel_id\`, \`limit\` (padrão ${RECENT_SESSIONS_LIMIT}, máx. ${MAX_SESSIONS_LIMIT}), \`offset\` (padrão 0). Devolve ` +
+      '`{ sessions, has_more }` com uma página das sessões mais recentes (por última mensagem) do consultor autenticado nesta viagem: ' +
+      '`session_id`, `title` (primeiro prompt), `message_count`, `created_at`, `updated_at`. `has_more` = há outra página a partir de ' +
+      '`offset + sessions.length`. ' +
       'Pra retomar uma, busque as mensagens em `GET /travel_agent/ori/sessions/:sessionId` e continue mandando o mesmo `session_id` ' +
       'em `POST /travel_agent/ori` — a memória do agente é a mesma thread.',
     tags: ['Ori'],
@@ -221,13 +232,11 @@ export const oriSessionListRoute = registerApiRoute('/travel_agent/ori/sessions'
       throw error;
     }
 
-    const travelId = c.req.query('travel_id');
-    if (!travelId) {
-      return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
-    }
+    const query = parseOrBadRequest(sessionListQuerySchema, c.req.query(), c);
+    if (query instanceof Response) return query;
 
-    const sessions = await listOriChatSessions(tenantId, travelId, userId, RECENT_SESSIONS_LIMIT);
-    return c.json({ sessions }, 200);
+    const { sessions, hasMore } = await listOriChatSessions(tenantId, query.travel_id, userId, query.limit, query.offset);
+    return c.json({ sessions, has_more: hasMore }, 200);
   },
 });
 
@@ -265,5 +274,45 @@ export const oriSessionGetRoute = registerApiRoute('/travel_agent/ori/sessions/:
       return c.json({ error: 'not_found', message: `Sessão ${sessionId} não encontrada.` }, 404);
     }
     return c.json(session, 200);
+  },
+});
+
+export const oriSessionDeleteRoute = registerApiRoute('/travel_agent/ori/sessions/:sessionId', {
+  method: 'DELETE',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Exclui uma sessão de chat do Ori do histórico do usuário autenticado',
+    description:
+      'Query: `travel_id`. Apaga a transcrição (`ori_chat_session`) e a thread de memória do agente dessa sessão. ' +
+      'Devolve `{ deleted: true }`; 404 se a sessão não for do usuário autenticado.',
+    tags: ['Ori'],
+  },
+  handler: async (c) => {
+    let tenantId: string;
+    let userId: string;
+    try {
+      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        return c.json({ error: 'unauthorized', message: error.message }, 401);
+      }
+      throw error;
+    }
+
+    const travelId = c.req.query('travel_id');
+    if (!travelId) {
+      return c.json({ error: 'bad_request', message: '"travel_id" é obrigatório.' }, 400);
+    }
+
+    const sessionId = c.req.param('sessionId');
+    const deleted = await deleteOriChatSession(tenantId, travelId, userId, sessionId);
+    if (!deleted) {
+      return c.json({ error: 'not_found', message: `Sessão ${sessionId} não encontrada.` }, 404);
+    }
+    // Só depois de confirmar que a sessão era do usuário. Falha aqui não desfaz a exclusão do histórico.
+    await deleteOriSessionMemory(travelId, sessionId).catch((error) =>
+      logConversationError(travelId, `Ori: falha ao apagar memória da sessão ${sessionId}`, error),
+    );
+    return c.json({ deleted: true }, 200);
   },
 });

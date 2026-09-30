@@ -31,7 +31,7 @@ import {
   dailyScheduleEventUpdateRoute,
 } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
-import { oriChatRoute, oriApprovalRoute, oriSessionListRoute, oriSessionGetRoute } from './routes/ori-routes';
+import { oriChatRoute, oriApprovalRoute, oriSessionListRoute, oriSessionGetRoute, oriSessionDeleteRoute } from './routes/ori-routes';
 import {
   oriMemoryCandidateDecisionRoute,
   oriMemoryCandidateListRoute,
@@ -105,6 +105,7 @@ export const mastra = new Mastra({
       oriApprovalRoute,
       oriSessionListRoute,
       oriSessionGetRoute,
+      oriSessionDeleteRoute,
       oriMemoryGetRoute,
       oriMemoryUpdateRoute,
       oriMemoryDeleteRoute,

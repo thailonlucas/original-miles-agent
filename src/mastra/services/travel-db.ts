@@ -1014,16 +1014,34 @@ export async function recordOriApprovalDecision(
   );
 }
 
-export async function listOriChatSessions(tenantId: string, travelId: string, userId: string, limit: number): Promise<OriChatSessionSummary[]> {
+// Página de sessões, mais recente primeiro. Busca uma linha a mais que `limit` só pra saber se
+// ainda há outra página (`has_more`) sem precisar de um `count(*)`.
+export async function listOriChatSessions(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  limit: number,
+  offset = 0,
+): Promise<{ sessions: OriChatSessionSummary[]; hasMore: boolean }> {
   const { rows } = await getPool().query<OriChatSessionSummary>(
     `select session_id, title, jsonb_array_length(messages)::int as message_count, created_at, updated_at
      from ori_chat_session
      where tenant_id = $1 and travel_id = $2 and user_id = $3
-     order by updated_at desc
-     limit $4`,
-    [tenantId, travelId, userId, limit],
+     order by updated_at desc, session_id
+     limit $4 offset $5`,
+    [tenantId, travelId, userId, limit + 1, offset],
   );
-  return rows;
+  return { sessions: rows.slice(0, limit), hasMore: rows.length > limit };
+}
+
+// Apaga a sessão do histórico — só se for do usuário autenticado. `false` = não achou (ou não é dele).
+export async function deleteOriChatSession(tenantId: string, travelId: string, userId: string, sessionId: string): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `delete from ori_chat_session
+     where tenant_id = $1 and travel_id = $2 and user_id = $3 and session_id = $4`,
+    [tenantId, travelId, userId, sessionId],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 export async function getOriChatSession(tenantId: string, travelId: string, userId: string, sessionId: string): Promise<OriChatSession | null> {
