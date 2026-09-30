@@ -21,14 +21,14 @@ import { parseOrBadRequest } from './validate';
 // Mesmo contrato de autenticação das outras rotas de travel_agent (ver `voucher-routes.ts` /
 // `schedule-suggestion-routes.ts`): o frontend manda o access_token do Supabase Auth do usuário
 // (`Authorization: Bearer <access_token>`), não a chave estática (`ORIGINAL_MILES_API_KEY`).
-async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<{ tenantId: string; userId: string }> {
+async function resolveTenantId(authorizationHeader: string | undefined | null): Promise<{ tenantId: string; userId: string; userEmail: string }> {
   const token = extractBearerToken(authorizationHeader);
   const user = await verifySupabaseAccessToken(token);
   const tenantId = await getTenantIdByEmail(user.email);
   if (!tenantId) {
     throw new UnauthorizedError(`Nenhum tenant encontrado para o e-mail "${user.email}" (tabela team).`);
   }
-  return { tenantId, userId: user.id };
+  return { tenantId, userId: user.id, userEmail: user.email };
 }
 
 // Corta um prompt absurdamente longo em vez de rejeitar — mesmo raciocínio de
@@ -69,7 +69,7 @@ export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
       'sessão, inclusive para confirmar a criação de um voucher pedida numa mensagem anterior). O Ori pode buscar, criar, atualizar ' +
       'e excluir vouchers da viagem através de tools próprias, sempre escopadas ao tenant/viagem do usuário autenticado. A resposta ' +
       'inclui `updated_data` (boolean, calculado pelo backend, não pela IA): `true` quando esta resposta chamou alguma tool de ' +
-      'escrita (voucher, evento do dia a dia, contexto da viagem ou sugestões) — sinal pro front saber que precisa recarregar os ' +
+      'escrita (voucher, evento do dia a dia, memória da viagem ou sugestões) — sinal pro front saber que precisa recarregar os ' +
       'dados da viagem, sem indicar especificamente o que mudou. Se a resposta trouxer `pending_approval`, a geração pausou numa ' +
       'tool sensível (`decidirSugestao`/`adicionarSugestaoAoDiaADia`) esperando confirmação — resolva com ' +
       '`POST /travel_agent/ori/approval` antes de mandar a próxima mensagem normal.',
@@ -78,8 +78,9 @@ export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
   handler: async (c) => {
     let tenantId: string;
     let userId: string;
+    let userEmail: string;
     try {
-      ({ tenantId, userId } = await resolveTenantId(c.req.header('Authorization')));
+      ({ tenantId, userId, userEmail } = await resolveTenantId(c.req.header('Authorization')));
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         return c.json({ error: 'unauthorized', message: error.message }, 401);
@@ -116,7 +117,7 @@ export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
     }
 
     try {
-      const result = await askOri(tenantId, travelId, userId, sessionId, prompt);
+      const result = await askOri(tenantId, travelId, userId, userEmail, sessionId, prompt);
       // Histórico é best-effort: uma falha ao gravar não pode derrubar a resposta que o Ori já gerou
       // (e cujas tools de escrita já rodaram).
       const now = new Date().toISOString();

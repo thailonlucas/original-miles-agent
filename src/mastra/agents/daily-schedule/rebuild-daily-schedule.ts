@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import {
   getTravelSchedule,
-  getTravelSummary,
+  getTravelClientContext,
   getVoucherSummaries,
   saveTravelSchedule,
   withTravelScheduleLock,
@@ -40,7 +40,7 @@ export async function rebuildVoucherEvents(
   client: pg.PoolClient,
 ): Promise<{ days: DailyScheduleDay[]; openedVoucherIds: string[] }> {
   const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
-  const summary = await getTravelSummary(tenantId, travelId, client);
+  const summary = await getTravelClientContext(tenantId, travelId, client);
 
   const fromVouchers = vouchers.length > 0 ? await buildVoucherSchedule(vouchers, tenantId, summary) : { days: [], openedVoucherIds: [] };
 
@@ -70,7 +70,7 @@ export async function updateDailyScheduleForVoucher(tenantId: string, travelId: 
     }
 
     const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
-    const summary = await getTravelSummary(tenantId, travelId, client);
+    const summary = await getTravelClientContext(tenantId, travelId, client);
     const newEvents = await buildVoucherEvents(voucher.id, withoutThisVoucher, vouchers, tenantId, summary);
 
     // `currentDays` (não `withoutThisVoucher`): é dele que sai a posição que os eventos do voucher

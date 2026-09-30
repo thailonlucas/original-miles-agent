@@ -13,8 +13,8 @@ documentação aqui usam esse termo de propósito, "roteiro" aparece só como si
 pode buscar/criar/atualizar/excluir vouchers da viagem, consultar e corrigir eventos do dia a dia
 (`daily_schedule`) já montado, gerar sugestões de atividades pra dias específicos e decidir sobre
 elas (aprovar insere o evento de verdade no dia a dia, rejeitar só registra), propor uma ideia em
-conversa e adicioná-la direto ao dia a dia depois de convergir com o consultor, e ler/editar o
-"Contexto da Viagem" cadastrado no front, tudo através de tools, sempre por iniciativa
+conversa e adicioná-la direto ao dia a dia depois de convergir com o consultor, ler o "Contexto da
+Viagem" cadastrado no front e anotar o que o consultor conta na memória da viagem, tudo através de tools, sempre por iniciativa
 conversacional (nunca por comando estruturado).
 
 Chamado via `POST /travel_agent/ori` (`routes/ori-routes.ts`).
@@ -33,11 +33,15 @@ Seções dinâmicas:
 
 - **"## Documentos disponíveis"** — a lista de vouchers (`formatVoucherList`, mesmo filtro e formato
   de linha do n8n).
-- **"## Contexto da viagem"** — só quando `travel.summary` existe.
+- **"## Contexto da viagem"** — `travel.summary`, escrito só pelo consultor na tela; o Ori só lê.
+- **"## O que a equipe já contou sobre esta viagem"** — `travel.ori_memory` (`formatTravelMemory`):
+  uma linha por anotação, com id, quem contou ("você" se foi o consultor desta conversa, senão o
+  e-mail) e a data, mais quem corrigiu e quando. Serve pro Ori pesar uma informação e dizer de onde
+  ela veio quando duas se contradizem.
 - **"## Dia a dia atual"** — índice compacto do `daily_schedule` (`formatScheduleIndex`): uma linha
   por dia, título dos eventos por período com o index de cada um, sem `content`. O model já sabe o
   que tem na viagem sem gastar tool call, e só chama `buscarDiaADia` com a data quando precisa do
-  detalhe. `askOri` busca vouchers, contexto e dia a dia em paralelo.
+  detalhe. `askOri` busca vouchers, contexto, memória da viagem e dia a dia em paralelo.
 - **"## Sugestões de atividades"** — fluxo de sugestão (checar/perguntar o contexto antes, ideia
   pontual em texto + `adicionarSugestaoAoDiaADia`, ou várias opções com `sugerirAtividades` +
   `decidirSugestao`).
@@ -120,17 +124,20 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   front (perfil do cliente, tipo de viagem, preferências etc. — ver
   `original-miles-cartinhas/src/routes/index.tsx`, campo `tripContext`/`saveTripSummary`). Sem
   input — sempre a viagem do `requestContext`. `summary` vem `null` se a viagem ainda não tiver
-  contexto cadastrado.
-- **`anotarContextoViagem`** (`tools/note-travel-context-tool.ts`) — **automático, sem
-  confirmação**: tudo que o consultor conta sobre o cliente/viagem é anotado na hora.
-  `appendTravelSummary` (`services/travel-db.ts`) acrescenta UMA linha ao fim de `travel.summary`
-  concatenando no SQL, com o limite (`MAX_TRAVEL_SUMMARY_LENGTH`, 4000) conferido na mesma query —
-  o model nunca reescreve o texto inteiro, então não tem como apagar algo por engano. Se não couber,
-  devolve erro pedindo pra consolidar com `atualizarContextoViagem`.
-- **`atualizarContextoViagem`** (`tools/update-travel-context-tool.ts`) — reescreve `travel.summary`
-  inteiro (`saveTravelSummary`, a mesma função da rota `PUT /travel_agent/travel-summary`). Só pra
-  corrigir ou consolidar o texto; informação nova vai por `anotarContextoViagem`. Como substitui tudo,
-  **`requireApproval: true`**.
+  contexto cadastrado. **Só leitura**: esse campo é só do consultor.
+- **`anotarSobreViagem`** (`tools/note-travel-memory-tool.ts`) — **automático, sem confirmação**:
+  guarda UMA informação que o consultor contou sobre o cliente/viagem e que continua valendo, como
+  item da memória da viagem (`addTravelMemoryItem`, `services/travel-db.ts`, coluna
+  `travel.ori_memory`). O mesmo texto não duplica; teto de `MAX_TRAVEL_MEMORY_ITEMS`.
+- **`corrigirAnotacaoViagem`** (`tools/correct-travel-memory-tool.ts`) — corrige (`text`) ou remove
+  (`text: null`) UM item pelo id. Só quando o consultor diz que algo mudou ou está errado, nunca pra
+  reorganizar. Sem confirmação, como `esquecerPreferencia`.
+
+  **Por que saiu do `travel.summary`**: antes as duas tools acima escreviam no próprio Contexto da
+  Viagem — `anotarContextoViagem` concatenava linhas e, quando passava de 4000 caracteres, mandava
+  "consolidar" com `atualizarContextoViagem`, que reescrevia o texto inteiro e acabava tirando
+  informação (inclusive o que o consultor escreveu à mão). Agora o summary é só do consultor, e o que
+  o Ori aprende no chat vira itens separados, com id, corrigidos um por vez.
 - **`buscarSugestoes`** (`tools/get-suggestions-tool.ts`) — lista as sugestões de atividades já
   geradas pra esta viagem (`getSuggestions`, `services/travel-db.ts`, coluna `travel.suggestions`),
   com filtro opcional por `status` (`pending`/`approved`/`rejected`/`all`). Sem `status`, esconde as
@@ -207,7 +214,27 @@ memória do usuário logado (`services/ori-memory-db.ts`) e `buildOriInstruction
 "Regras desta agência" e "Como este consultor trabalha" (só itens ativos, com id). Tools:
 `anotarPreferenciaConsultor` (pedido explícito, sem confirmação; `session_id` do `requestContext` vira
 evidência) e `esquecerPreferencia` (pelo id). Preferência é sobre o CONSULTOR; o que é sobre o
-cliente continua no Contexto da Viagem. Rotas em `routes/ori-memory-routes.ts`.
+cliente vai pra memória da viagem (abaixo). Rotas em `routes/ori-memory-routes.ts`.
+
+## Memória da viagem
+
+`travel.ori_memory` (`sql/travel_ori_memory.sql`, acesso em `services/travel-db.ts`): lista jsonb
+no mesmo molde de `ori_user_memory`, mas o dono é a VIAGEM — todos os consultores dela veem e
+corrigem os mesmos itens. Cada item tem rastreabilidade: `created_by`/`created_by_email`/
+`session_id`/`created_at` (quem contou, em qual conversa, quando) e, se corrigido,
+`updated_by`/`updated_by_email`/`updated_session_id`/`updated_at` (o autor original não se perde).
+`user_id`/`user_email`/`session_id` vêm do `requestContext` (a rota passa o e-mail do token), nunca
+do model. Escritas em transação com `for update` (`mutateTravelMemory`) — dois consultores podem
+anotar ao mesmo tempo.
+
+Os agentes `daily-schedule` e `schedule-suggestion` recebem `getTravelClientContext`: o summary + as
+anotações num texto só, no mesmo parâmetro `summary` de antes (antes as anotações estavam dentro do
+summary, então eles não perdem nada).
+
+Rotas (`routes/travel-memory-routes.ts`), qualquer consultor do tenant: `GET
+/travel_agent/travel-memory?travel_id=`, `PATCH /travel_agent/travel-memory/:itemId` (`{ travel_id,
+text }`) e `DELETE /travel_agent/travel-memory/:itemId?travel_id=`. O learner
+(`ori-memory-learner`) não escreve aqui — só o Ori, durante a conversa.
 
 ## Conversa x ação
 
@@ -220,7 +247,7 @@ pra recomendar/comparar nem oferecida no fim.
 O prompt ("## Como conversar") separa três tipos de escrita:
 
 - **Automáticas, sem perguntar** — o que o consultor CONTA fica registrado na hora:
-  `anotarContextoViagem` (qualquer informação sobre cliente/viagem) e `rejeitarSugestaoDoChat` (uma
+  `anotarSobreViagem` (informação sobre cliente/viagem que continua valendo) e `rejeitarSugestaoDoChat` (uma
   ideia que o Ori propôs no chat e o consultor recusou, gravada como `rejected` com o motivo — é o
   que impede o Ori e o gerador de sugestões de oferecerem a mesma coisa de novo).
 - **Com prévia + cartão** — tudo que grava no dia a dia ou mexe em sugestões: primeiro o texto no
@@ -280,7 +307,7 @@ trocar de "owner"/resource depois de criada).
 
 Sem essa memória, o fluxo de confirmação de `criarDocumento` (e das outras tools de escrita que
 pedem confirmação por convenção de prompt — `atualizarDocumento`, `deletarDocumento`,
-`atualizarEventoDiaADia`, `atualizarContextoViagem`) não funcionaria: a resposta de confirmação do
+`atualizarEventoDiaADia`) não funcionaria: a resposta de confirmação do
 consultor chega numa chamada HTTP separada (`session_id` igual), e só o histórico da mesma thread
 permite o agente lembrar o que ele mesmo perguntou. `decidirSugestao`/`adicionarSugestaoAoDiaADia`
 não dependem disso — a pausa delas é resolvida pelo snapshot do próprio Mastra (`runId`/

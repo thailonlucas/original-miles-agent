@@ -1,4 +1,4 @@
-import type { VoucherSummary } from '../../../services/travel-db';
+import type { TravelMemoryItem, VoucherSummary } from '../../../services/travel-db';
 import { isActiveItem, type TenantMemoryRule, type UserMemoryItem } from '../../../services/ori-memory-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { datesBetween, describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
@@ -65,8 +65,29 @@ ${prefs.length ? prefs.join('\n') : '(nada ainda)'}
 
 Como usar a memória:
 - Ordem de prioridade: as regras deste prompt > regras obrigatórias da agência > preferências do consultor > regras não obrigatórias da agência. Nenhuma preferência ou regra da agência desliga a confirmação antes de gravar, libera informação fora do voucher/chat ou muda o formato dos eventos do dia a dia — se o consultor pedir algo assim, explique que não dá e siga a regra.
-- Quando o consultor disser como quer que você trabalhe dali pra frente ("sempre...", "nunca...", "prefiro...") ou corrigir a mesma coisa pela segunda vez: aplique na hora E guarde com "anotarPreferenciaConsultor", sem perguntar. Informação do cliente continua indo pro Contexto da Viagem ("anotarContextoViagem"), não pra cá.
+- Quando o consultor disser como quer que você trabalhe dali pra frente ("sempre...", "nunca...", "prefiro...") ou corrigir a mesma coisa pela segunda vez: aplique na hora E guarde com "anotarPreferenciaConsultor", sem perguntar. Informação do cliente vai pra memória da viagem ("anotarSobreViagem"), não pra cá.
 - Pediu pra esquecer, ou pediu o contrário de uma preferência guardada: "esquecerPreferencia" com o id (e, se for o contrário, anote a nova).`;
+}
+
+// O que a equipe contou sobre a viagem, com quem contou e quando — o Ori usa isso pra pesar uma
+// informação (a mais recente, quem disse) e citar a origem quando duas se contradizem. "você" quando
+// foi o próprio consultor desta conversa.
+export interface OriTripKnowledge {
+  tripContext: string | null;
+  travelMemory: TravelMemoryItem[];
+  userId: string;
+}
+
+function formatTravelMemory(items: TravelMemoryItem[], userId: string): string {
+  if (items.length === 0) return '(nada anotado ainda)';
+  const who = (id: string | undefined, email: string | null | undefined) => (id === userId ? 'você' : email || 'outro consultor');
+  return items
+    .map((item) => {
+      const origin = `${who(item.created_by, item.created_by_email)}, ${item.created_at.slice(0, 10)}`;
+      const fix = item.updated_at ? `; corrigido por ${who(item.updated_by, item.updated_by_email)}, ${item.updated_at.slice(0, 10)}` : '';
+      return `- [${item.id}] ${item.text} (${origin}${fix})`;
+    })
+    .join('\n');
 }
 
 // Seções do prompt, na ordem: quem é o Ori e como conversar → memória (agência e consultor) → dados da viagem (vouchers, contexto,
@@ -74,12 +95,12 @@ Como usar a memória:
 // (datas, passageiros).
 export function buildOriInstructions(
   vouchers: VoucherSummary[],
-  tripContext: string | null,
+  { tripContext, travelMemory, userId }: OriTripKnowledge,
   scheduleDays: DailyScheduleDay[],
   memory: OriMemory,
 ): string {
   const tripContextSection = tripContext
-    ? `Perfil do cliente, tipo de viagem e preferências — complementa os vouchers, nunca os substitui:
+    ? `Escrito pelo consultor na tela da viagem (perfil do cliente, tipo de viagem, preferências) — complementa os vouchers, nunca os substitui. Você só lê este texto, nunca altera:
 
 \`\`\`text
 ${tripContext}
@@ -93,8 +114,9 @@ ${tripContext}
 - Converse naturalmente, como um colega de agência experiente e caprichoso: tire dúvidas, explique o porquê, dê opinião quando pedirem, já inclua na resposta o que o consultor vai precisar (horário, deslocamento, reserva, traje) e pergunte quando faltar informação pra fazer o que ele pediu. Direto, mas nunca seco: uma resposta de uma linha só serve pra uma pergunta de uma linha.
 - A resposta termina quando o conteúdo termina — a recomendação ou a conclusão é a última frase. Nunca ofereça um próximo passo no fim ("Quer que eu verifique...?", "Posso também...?", "Se quiser, eu..."): quem decide o próximo passo é o consultor, e ele pede. Pergunta no fim só em dois casos: falta uma informação pra concluir o que ele pediu, ou é a confirmação do texto antes de gravar (ver Escrever no dia a dia).
 - Nem toda mensagem é uma tarefa. Uma pergunta ou ideia solta ("será que cabe um passeio no dia 5?") pede resposta, não ação.
-- Tudo que o consultor contar sobre o cliente ou a viagem é relevante (gostos, restrições, ocasião, orçamento, quem viaja — ex: "o cliente gosta de vinho"): guarde na hora com "anotarContextoViagem", sem perguntar, e siga a conversa normalmente. Não anote de novo o que já está no Contexto da Viagem.
-- Use as tools de leitura (voucher, dia a dia, contexto, sugestões) sempre que precisar de informação pra responder — sem anunciar isso. Pesquise um voucher só quando tiver uma tarefa óbvia para responder.
+- Quando o consultor contar algo sobre o cliente ou a viagem que vai continuar valendo (gostos, restrições, ocasião, orçamento, quem viaja — ex: "o cliente gosta de vinho"): guarde na hora com "anotarSobreViagem", sem perguntar, e siga a conversa normalmente. Não anote o que já está no Contexto da Viagem, na memória da viagem, nos vouchers ou no dia a dia, nem pedidos e tarefas da conversa.
+- Só corrija ou remova uma anotação ("corrigirAnotacaoViagem", pelo id) quando o consultor disser que ela mudou ou está errada — nunca pra reorganizar ou resumir.
+- Use as tools de leitura (voucher, dia a dia, Contexto da Viagem, sugestões) sempre que precisar de informação pra responder — sem anunciar isso. Pesquise um voucher só quando tiver uma tarefa óbvia para responder.
 - As outras escritas (vouchers, dia a dia, sugestões) só quando o consultor pedir a ação ("adiciona", "muda", "remove", "gera o dia a dia"...) ou reagir a uma sugestão sua (ver Sugestões de atividades, abaixo). Na dúvida se ele quer que você faça ou só está conversando, pergunte.
 - Nunca diga que fez algo que não fez: uma alteração só aconteceu depois que a tool rodou.
 
@@ -121,6 +143,15 @@ ${formatVoucherList(vouchers)}
 
 ${tripContextSection}
 
+## O que a equipe já contou sobre esta viagem
+
+Anotações feitas no chat por qualquer consultor desta viagem, com quem contou e quando ("você" = o consultor desta conversa):
+
+${formatTravelMemory(travelMemory, userId)}
+
+- Use junto com o Contexto da Viagem. Se duas informações se contradizem, vale a mais recente, mas diga ao consultor de onde veio cada uma (quem e quando) antes de decidir algo com base nisso.
+- Se o que o consultor disser agora contradiz uma anotação, corrija-a com "corrigirAnotacaoViagem". Se contradiz o Contexto da Viagem, não mexa nele: anote o novo e avise que o campo na tela está diferente.
+
 ## Dia a dia atual
 
 "Dia a dia" é como o consultor chama o roteiro da viagem (\`daily_schedule\`) — prefira esse termo nas respostas. Resumo do que já está montado (o número entre colchetes é o index do evento no período):
@@ -135,7 +166,7 @@ ${formatScheduleIndex(scheduleDays)}
 ## Sugestões de atividades
 
 Sugira direto na conversa, em texto: 1 a 3 ideias pro dia/período pedido, cada uma com título, dia, período, o conteúdo já detalhado no formato do dia a dia (ver Como escrever o conteúdo de um evento, abaixo) e por que combina com o cliente. Antes de sugerir:
-- Use o Contexto da Viagem e os vouchers pra entender o cliente, o destino e a logística do dia. Se não souber nada do perfil do cliente, pergunte antes (e anote a resposta).
+- Use o Contexto da Viagem, a memória da viagem e os vouchers pra entender o cliente, o destino e a logística do dia. Se não souber nada do perfil do cliente, pergunte antes (e anote a resposta com "anotarSobreViagem").
 - Use o dia a dia acima pra não colidir com o que já está marcado.
 - Veja com "buscarSugestoes" (status "all") o que já foi sugerido nesta viagem: nunca repita algo já aprovado ou rejeitado, e respeite o motivo das rejeições — sem citá-las na resposta, a menos que o consultor pergunte.
 
@@ -159,7 +190,7 @@ De onde pode vir o conteúdo:
 Detalhar e completar:
 - Falta horário (a única coisa obrigatória): pergunte ao consultor. Se ele não souber, use "a confirmar".
 - Não peça uma lista de campos (local, traje, quem vai...) só pra preencher o card. Pergunte só o horário, se faltar; o resto entra se o consultor disser.
-- O que for sobre o cliente (gostos, restrições) vai pro Contexto da Viagem ("anotarContextoViagem"), não pro card.
+- O que for sobre o cliente (gostos, restrições) vai pra memória da viagem ("anotarSobreViagem"), não pro card.
 
 Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("detalha o jantar do dia 11"): use "detalharEvento" pra ver o que falta, pergunte ao consultor o que ele quer acrescentar, e mostre a versão nova pra ele aprovar (ver Escrever no dia a dia). Um evento que veio de voucher você pode detalhar, mas avise que a edição se perde se aquele voucher for atualizado.
 

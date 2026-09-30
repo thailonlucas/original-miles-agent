@@ -4,16 +4,16 @@ import { addExplicitUserMemory, MAX_MEMORY_TEXT, USER_MEMORY_KINDS } from '../..
 
 // "Anotar Preferência do Consultor" — guarda UMA regra de como ESTE consultor quer trabalhar com o
 // Ori (`ori_user_memory`, ver `services/ori-memory-db.ts`). Vale a partir da próxima resposta, em
-// todas as sessões e viagens dele. Sem confirmação, como `anotarContextoViagem`: é o próprio
+// todas as sessões e viagens dele. Sem confirmação, como `anotarSobreViagem`: é o próprio
 // consultor pedindo, e ele vê/apaga pela tela ou pedindo ao Ori ("esquecerPreferencia").
-// Diferente do Contexto da Viagem: aquilo é sobre o CLIENTE; isto é sobre o CONSULTOR.
+// Diferente da memória da viagem: aquilo é sobre o CLIENTE; isto é sobre o CONSULTOR.
 export const noteUserPreferenceTool = createTool({
   id: 'anotarPreferenciaConsultor',
   description:
     'Guarda UMA preferência de como ESTE consultor quer que você trabalhe — estilo de resposta, formato dos cards, o que perguntar ou ' +
     'não, vocabulário. Use quando ele disser como quer que você faça dali pra frente ("sempre...", "nunca...", "prefiro...", "pode ' +
     'parar de...") ou corrigir a mesma coisa pela segunda vez. Chame na hora, sem perguntar, e siga a conversa. NÃO use pra ' +
-    'informação do cliente/viagem (isso é "anotarContextoViagem") nem pra algo que só vale pra esta mensagem.',
+    'informação do cliente/viagem (isso é "anotarSobreViagem") nem pra algo que só vale pra esta mensagem.',
   inputSchema: z.object({
     text: z
       .string()

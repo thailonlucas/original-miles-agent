@@ -12,7 +12,7 @@ const DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 // "adicionarSugestaoAoDiaADia" (o caminho da ideia aprovada).
 //
 // Sem `requireApproval`: não grava nada no dia a dia, só registra o que o consultor acabou de dizer —
-// mesma lógica de anotar o Contexto da Viagem.
+// mesma lógica de anotar na memória da viagem.
 export const rejectChatSuggestionTool = createTool({
   id: 'rejeitarSugestaoDoChat',
   description:

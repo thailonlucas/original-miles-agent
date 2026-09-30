@@ -1,7 +1,7 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { RequestContext } from '@mastra/core/request-context';
-import { getDailyScheduleEvent, getSuggestions, getTravelSchedule, getTravelSummary, getVoucherSummaries } from '../../services/travel-db';
+import { getDailyScheduleEvent, getSuggestions, getTravelMemory, getTravelSchedule, getTravelSummary, getVoucherSummaries } from '../../services/travel-db';
 import { dailyScheduleSchema } from '../daily-schedule/schema';
 import type { SchedulePeriod } from '../daily-schedule/schedule-merge';
 import { buildOriInstructions } from './prompts/system-prompt';
@@ -13,7 +13,6 @@ import { deleteVoucherTool } from './tools/delete-voucher-tool';
 import { getDailyScheduleTool } from './tools/get-daily-schedule-tool';
 import { updateDailyScheduleEventTool } from './tools/update-daily-schedule-event-tool';
 import { getTravelContextTool } from './tools/get-travel-context-tool';
-import { updateTravelContextTool } from './tools/update-travel-context-tool';
 import { getSuggestionsTool } from './tools/get-suggestions-tool';
 import { detailEventTool } from './tools/detail-event-tool';
 import { suggestActivitiesTool } from './tools/suggest-activities-tool';
@@ -26,7 +25,8 @@ import { createSuggestionTool } from './tools/create-suggestion-tool';
 import { updateSuggestionTool } from './tools/update-suggestion-tool';
 import { removeSuggestionTool } from './tools/remove-suggestion-tool';
 import { rejectChatSuggestionTool } from './tools/reject-chat-suggestion-tool';
-import { noteTravelContextTool } from './tools/note-travel-context-tool';
+import { noteTravelMemoryTool } from './tools/note-travel-memory-tool';
+import { correctTravelMemoryTool } from './tools/correct-travel-memory-tool';
 import { noteUserPreferenceTool } from './tools/note-user-preference-tool';
 import { forgetUserPreferenceTool } from './tools/forget-user-preference-tool';
 import { internetSearchTool } from './tools/web-search-tool';
@@ -53,7 +53,6 @@ const WRITE_TOOL_IDS = new Set<string>([
   updateVoucherTool.id,
   deleteVoucherTool.id,
   updateDailyScheduleEventTool.id,
-  updateTravelContextTool.id,
   suggestActivitiesTool.id,
   decideSuggestionTool.id,
   addSuggestionToScheduleTool.id,
@@ -64,7 +63,8 @@ const WRITE_TOOL_IDS = new Set<string>([
   updateSuggestionTool.id,
   removeSuggestionTool.id,
   rejectChatSuggestionTool.id,
-  noteTravelContextTool.id,
+  noteTravelMemoryTool.id,
+  correctTravelMemoryTool.id,
 ]);
 
 // Instructions reais (com a lista de vouchers da viagem) são montadas por chamada, ver
@@ -88,8 +88,8 @@ export const oriAgent = new Agent({
     atualizarEventoDiaADia: updateDailyScheduleEventTool,
     removerEventoDiaADia: removeDailyScheduleEventTool,
     buscarContextoViagem: getTravelContextTool,
-    anotarContextoViagem: noteTravelContextTool,
-    atualizarContextoViagem: updateTravelContextTool,
+    anotarSobreViagem: noteTravelMemoryTool,
+    corrigirAnotacaoViagem: correctTravelMemoryTool,
     buscarSugestoes: getSuggestionsTool,
     detalharEvento: detailEventTool,
     sugerirAtividades: suggestActivitiesTool,
@@ -176,9 +176,6 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
     const position = typeof args.newIndex === 'number' ? `, como ${args.newIndex + 1}º evento do período` : '';
     return `Confirma que quer alterar ${what}${moveTo}${position}?`;
   }
-  if (toolName === updateTravelContextTool.id) {
-    return args.summary ? "Confirma que quer reescrever o Contexto da Viagem com o texto acima?" : "Confirma que quer apagar todo o Contexto da Viagem?";
-  }
   if (toolName === internetSearchTool.id) {
     return webSearchApprovalQuestion(String(args.query ?? ''));
   }
@@ -231,10 +228,19 @@ async function finalizeOriOutput(
 // por conversa; `travelId` entra no id da thread (não só no `resource`) para uma reutilização
 // acidental do mesmo `session_id` em outra viagem nunca colidir com uma thread já existente de
 // outro dono (thread não pode trocar de "owner"/resource depois de criada).
-export async function askOri(tenantId: string, travelId: string, userId: string, sessionId: string, prompt: string): Promise<OriResponse> {
-  const [vouchers, tripContext, schedule, tenantRules, userItems] = await Promise.all([
+// `userEmail` só serve de rastreabilidade: vai com `user_id` em cada anotação da memória da viagem.
+export async function askOri(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  userEmail: string,
+  sessionId: string,
+  prompt: string,
+): Promise<OriResponse> {
+  const [vouchers, tripContext, travelMemory, schedule, tenantRules, userItems] = await Promise.all([
     getVoucherSummaries(tenantId, travelId),
     getTravelSummary(tenantId, travelId),
+    getTravelMemory(tenantId, travelId),
     getTravelSchedule(tenantId, travelId),
     // Memória é complemento: uma falha ao ler (ex: tabela ainda não criada) não pode derrubar a
     // conversa — o Ori responde sem ela.
@@ -250,7 +256,10 @@ export async function askOri(tenantId: string, travelId: string, userId: string,
   const parsedSchedule = dailyScheduleSchema.safeParse(schedule.dailySchedule);
 
   const output = await oriAgent.generate(prompt, {
-    instructions: buildOriInstructions(vouchers, tripContext, parsedSchedule.success ? parsedSchedule.data : [], { tenantRules, userItems }),
+    instructions: buildOriInstructions(vouchers, { tripContext, travelMemory, userId }, parsedSchedule.success ? parsedSchedule.data : [], {
+      tenantRules,
+      userItems,
+    }),
     memory: {
       thread: `${travelId}:${sessionId}`,
       resource: tenantId,
@@ -259,7 +268,9 @@ export async function askOri(tenantId: string, travelId: string, userId: string,
       ['tenant_id', tenantId],
       ['travel_id', travelId],
       ['user_id', userId],
-      // Evidência das preferências anotadas nesta conversa (`anotarPreferenciaConsultor`).
+      // Autoria das anotações da memória da viagem (`anotarSobreViagem`/`corrigirAnotacaoViagem`).
+      ['user_email', userEmail],
+      // Evidência das preferências (`anotarPreferenciaConsultor`) e conversa de origem das anotações da viagem.
       ['session_id', sessionId],
     ]),
   });

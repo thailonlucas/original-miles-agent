@@ -498,25 +498,152 @@ export async function saveTravelSummary(tenantId: string, travelId: string, summ
   await getPool().query(`update travel set summary = $1 where tenant_id = $2 and id = $3`, [summary, tenantId, travelId]);
 }
 
-// Tamanho máximo do Contexto da Viagem — mesmo limite pra rota (`routes/travel-summary-routes.ts`)
-// e pras tools do Ori.
+// Tamanho máximo do Contexto da Viagem — limite da rota (`routes/travel-summary-routes.ts`).
 export const MAX_TRAVEL_SUMMARY_LENGTH = 4000;
 
-// Acrescenta UMA anotação ao fim do Contexto da Viagem, sem tocar no que já existe — o Ori chama isso
-// sozinho sempre que o consultor conta algo sobre o cliente/viagem. Concatenar no SQL (em vez de o
-// model reescrever o texto inteiro) garante que nada já escrito se perde, e o limite é conferido na
-// mesma query. Devolve `null` se não couber — aí o contexto precisa ser consolidado.
-export async function appendTravelSummary(tenantId: string, travelId: string, userId: string, note: string): Promise<string | null> {
-  const line = `- ${note.trim().replace(/^-\s*/, '')}`;
-  await ensureTravelExists(tenantId, travelId, userId);
-  const { rows } = await getPool().query<{ summary: string }>(
-    `update travel
-     set summary = case when coalesce(summary, '') = '' then $1 else summary || E'\\n' || $1 end
-     where tenant_id = $2 and id = $3 and length(coalesce(summary, '')) + length($1) + 1 <= $4
-     returning summary`,
-    [line, tenantId, travelId, MAX_TRAVEL_SUMMARY_LENGTH],
+// --- Memória da viagem (`travel.ori_memory`, ver `sql/travel_ori_memory.sql`) ---
+//
+// O que os consultores contaram ao Ori sobre o cliente/a viagem. Compartilhada entre todos os
+// consultores da viagem, e cada item diz quem contou, quando e em qual conversa — o Ori usa isso pra
+// saber de onde veio cada informação. Separada de `travel.summary` ("Contexto da Viagem"), que é só
+// do consultor: o Ori lê o summary e nunca escreve nele.
+
+export const MAX_TRAVEL_MEMORY_ITEMS = 40;
+export const MAX_TRAVEL_MEMORY_TEXT = 300;
+
+export interface TravelMemoryItem {
+  id: string;
+  text: string;
+  created_by: string;
+  created_by_email: string | null;
+  session_id: string | null;
+  created_at: string;
+  // Última correção (`corrigirAnotacaoViagem` ou a rota). Ausente se o item nunca foi corrigido.
+  updated_by?: string;
+  updated_by_email?: string | null;
+  updated_session_id?: string | null;
+  updated_at?: string;
+}
+
+// Quem está escrevendo — vem do `requestContext` (tools) ou do token (rotas), nunca do model.
+export interface TravelMemoryAuthor {
+  userId: string;
+  email: string | null;
+  sessionId: string | null;
+}
+
+const normalizeTravelMemoryText = (text: string): string =>
+  text.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[.!;]+$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+export async function getTravelMemory(tenantId: string, travelId: string, client: Queryable = getPool()): Promise<TravelMemoryItem[]> {
+  const { rows } = await client.query<{ ori_memory: TravelMemoryItem[] | null }>(
+    `select ori_memory from travel where tenant_id = $1 and id = $2 limit 1`,
+    [tenantId, travelId],
   );
-  return rows[0]?.summary ?? null;
+  return rows[0]?.ori_memory ?? [];
+}
+
+// Lê, transforma e grava na mesma transação, com a linha travada — dois consultores (ou duas
+// mensagens) podem anotar na mesma viagem ao mesmo tempo. Devolver a mesma lista = nada mudou.
+async function mutateTravelMemory<T>(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  mutate: (items: TravelMemoryItem[]) => { items: TravelMemoryItem[]; result: T },
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query('begin');
+    await ensureTravelExists(tenantId, travelId, userId, client);
+    const { rows } = await client.query<{ ori_memory: TravelMemoryItem[] | null }>(
+      `select ori_memory from travel where tenant_id = $1 and id = $2 for update`,
+      [tenantId, travelId],
+    );
+    const current = rows[0]?.ori_memory ?? [];
+    const { items, result } = mutate(current);
+    if (items !== current) {
+      await client.query(`update travel set ori_memory = $3::jsonb where tenant_id = $1 and id = $2`, [tenantId, travelId, JSON.stringify(items)]);
+    }
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Anota UMA informação. O mesmo texto (normalizado) já anotado não duplica — devolve o existente.
+export async function addTravelMemoryItem(
+  tenantId: string,
+  travelId: string,
+  author: TravelMemoryAuthor,
+  text: string,
+): Promise<{ item: TravelMemoryItem; duplicate: boolean } | { error: string }> {
+  return mutateTravelMemory<{ item: TravelMemoryItem; duplicate: boolean } | { error: string }>(tenantId, travelId, author.userId, (items) => {
+    const key = normalizeTravelMemoryText(text);
+    const existing = items.find((i) => normalizeTravelMemoryText(i.text) === key);
+    if (existing) return { items, result: { item: existing, duplicate: true } };
+    if (items.length >= MAX_TRAVEL_MEMORY_ITEMS) {
+      return {
+        items,
+        result: { error: `A memória desta viagem está cheia (${MAX_TRAVEL_MEMORY_ITEMS} anotações). Corrija ou remova alguma que não vale mais antes.` },
+      };
+    }
+    const item: TravelMemoryItem = {
+      id: crypto.randomUUID(),
+      text: text.trim().slice(0, MAX_TRAVEL_MEMORY_TEXT),
+      created_by: author.userId,
+      created_by_email: author.email,
+      session_id: author.sessionId,
+      created_at: new Date().toISOString(),
+    };
+    return { items: [...items, item], result: { item, duplicate: false } };
+  });
+}
+
+// Corrige o texto de UM item. Mantém quem anotou originalmente e registra quem corrigiu.
+export async function updateTravelMemoryItem(
+  tenantId: string,
+  travelId: string,
+  author: TravelMemoryAuthor,
+  itemId: string,
+  text: string,
+): Promise<{ previous: TravelMemoryItem; item: TravelMemoryItem } | null> {
+  return mutateTravelMemory(tenantId, travelId, author.userId, (items) => {
+    const previous = items.find((i) => i.id === itemId);
+    if (!previous) return { items, result: null };
+    const item: TravelMemoryItem = {
+      ...previous,
+      text: text.trim().slice(0, MAX_TRAVEL_MEMORY_TEXT),
+      updated_by: author.userId,
+      updated_by_email: author.email,
+      updated_session_id: author.sessionId,
+      updated_at: new Date().toISOString(),
+    };
+    return { items: items.map((i) => (i.id === itemId ? item : i)), result: { previous, item } };
+  });
+}
+
+export async function removeTravelMemoryItem(tenantId: string, travelId: string, userId: string, itemId: string): Promise<TravelMemoryItem | null> {
+  return mutateTravelMemory(tenantId, travelId, userId, (items) => {
+    const removed = items.find((i) => i.id === itemId) ?? null;
+    return { items: removed ? items.filter((i) => i.id !== itemId) : items, result: removed };
+  });
+}
+
+// Contexto do cliente pros agentes que montam o dia a dia e sugerem atividades (`daily-schedule`,
+// `schedule-suggestion`): o Contexto da Viagem do consultor + o que a equipe contou ao Ori. Antes as
+// anotações do Ori iam pro próprio summary, então esses agentes continuam recebendo as duas coisas
+// num texto só, no mesmo parâmetro `summary` de sempre.
+export async function getTravelClientContext(tenantId: string, travelId: string, client: Queryable = getPool()): Promise<string | null> {
+  // Em sequência: `client` pode ser o PoolClient da transação do rebuild, que não aceita queries paralelas.
+  const summary = await getTravelSummary(tenantId, travelId, client);
+  const memory = await getTravelMemory(tenantId, travelId, client);
+  const notes = memory.map((i) => `- ${i.text}`).join('\n');
+  if (!notes) return summary;
+  return summary ? `${summary}\n\nContado pela equipe no chat:\n${notes}` : `Contado pela equipe no chat:\n${notes}`;
 }
 
 export type SuggestionStatus = 'pending' | 'approved' | 'rejected';

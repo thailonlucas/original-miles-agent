@@ -54,6 +54,7 @@ import {
   scheduleSuggestionMoveRoute,
 } from './routes/schedule-suggestion-decision-routes';
 import { travelSummaryGetRoute, travelSummaryUpdateRoute } from './routes/travel-summary-routes';
+import { travelMemoryGetRoute, travelMemoryUpdateRoute, travelMemoryDeleteRoute } from './routes/travel-memory-routes';
 import {
   companyReferenceListRoute,
   companyReferenceGetRoute,
@@ -131,6 +132,9 @@ export const mastra = new Mastra({
       scheduleSuggestionItemUpdateRoute,
       travelSummaryGetRoute,
       travelSummaryUpdateRoute,
+      travelMemoryGetRoute,
+      travelMemoryUpdateRoute,
+      travelMemoryDeleteRoute,
       companyReferenceListRoute,
       companyReferenceGetRoute,
       companyReferenceCreateRoute,

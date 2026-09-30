@@ -2,7 +2,7 @@ import {
   appendPendingSuggestions,
   getSuggestions,
   getTravelSchedule,
-  getTravelSummary,
+  getTravelClientContext,
   getVoucherSummaries,
   type StoredSuggestion,
   type VoucherSummary,
@@ -119,9 +119,9 @@ export async function suggestDayActivities(
     getTravelSchedule(tenantId, travelId),
     getVoucherSummaries(tenantId, travelId),
     getSuggestions(tenantId, travelId),
-    // Resumo geral cadastrado pelo cliente (ver `routes/travel-summary-routes.ts`) — contexto que
+    // Contexto da Viagem do consultor + o que a equipe contou ao Ori (`getTravelClientContext`) —
     // complementa (ou, na ausência de `prompt`, substitui) o padrão "high ticket" fixo do prompt.
-    getTravelSummary(tenantId, travelId),
+    getTravelClientContext(tenantId, travelId),
   ]);
 
   // "Inteligência" da viagem pro prompt: só sugestões já DECIDIDAS (aprovadas/rejeitadas) carregam
