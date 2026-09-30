@@ -2,7 +2,8 @@ import { removeVoucherFromDailySchedule, updateDailyScheduleForVoucher } from '.
 import type { VoucherSummary } from '../../services/travel-db';
 
 // Gatilhos fire-and-forget que mantêm o dia a dia reagindo a QUALQUER mudança de voucher (criar/
-// editar -> regera os eventos dele; excluir -> remove os eventos dele, sem IA). Usados pelas rotas de
+// editar -> encaixa: enriquece o card do mesmo compromisso ou cria um; excluir -> só marca os cards
+// dele, sem IA). Nunca refazem o dia a dia do zero. Usados pelas rotas de
 // `routes/voucher-routes.ts` e pelas tools de voucher do Ori — a resposta não espera o dia a dia.
 //
 // Usa `console.error` (não `helpers/logger.ts`) de propósito: `logger.ts` importa `mastra-instance.ts`

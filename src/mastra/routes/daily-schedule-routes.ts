@@ -65,8 +65,9 @@ export const dailyScheduleGenerateRoute = registerApiRoute('/travel_agent/daily-
   openapi: {
     summary: 'Gera do zero o roteiro dia a dia (daily_schedule) de uma viagem a partir dos vouchers já extraídos',
     description:
-      'Recebe `travel_id` e `session_id`. Refaz do zero todos os eventos que vêm de vouchers, mantém as sugestões aprovadas e os ' +
-      'eventos manuais, grava em `travel.daily_schedule` (array esparso — só dias com evento — e `travel_start_at`/`travel_end_at`) ' +
+      'Recebe `travel_id` e `session_id`. Refaz do zero todos os eventos que vêm de vouchers (edições neles se perdem), mantém as ' +
+      'sugestões aprovadas, os eventos do chat e manuais e os títulos editados, grava em `travel.daily_schedule` (array esparso — ' +
+      'só dias com evento — e `travel_start_at`/`travel_end_at`) ' +
       'e devolve `{ response, analysed_doc_ids }`, com `response` = o array de dias serializado. Mesma função da tool `gerarDiaADia` ' +
       'do Ori.',
     tags: ['Daily Schedule'],

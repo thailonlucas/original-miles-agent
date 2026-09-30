@@ -8,7 +8,20 @@ Mantém o dia a dia (roteiro) de uma viagem — `travel.daily_schedule` (jsonb) 
 `travel_end_at` — a partir dos vouchers extraídos: um item por dia com evento, eventos separados em
 manhã/tarde/noite.
 
-## Regra central: a LLM só gera eventos de voucher, o código decide o resto
+## Regra central: voucher nunca estraga o trabalho do consultor
+
+O consultor pode passar horas arrumando o dia a dia. Por isso **mudança de voucher (criar, atualizar,
+excluir) nunca recria, substitui, move nem apaga um card**:
+
+- Voucher criado ou atualizado **encaixa**: atualiza o card do mesmo compromisso (de qualquer origem —
+  a sugestão do restaurante aprovada e depois a reserva) ou cria um card novo. O card do consultor é a
+  base: o voucher corrige o que comprova ("a confirmar" → 16h), acrescenta o que falta e mantém o
+  resto. O que ele mudou num dado que o consultor escreveu fica em `observation` com o valor antigo.
+- Voucher excluído **marca** os cards dele (`removed_vouchers`); o consultor decide remover ou manter.
+- Só **refazer o dia a dia** (`generateDailySchedule`, rota do botão do front e tool `gerarDiaADia`)
+  refaz do zero, e só os cards de voucher — o resto fica.
+
+## Origem de um card
 
 Todo evento gravado tem `source` (`schema.ts` → `dailyScheduleEventSourceSchema`):
 
@@ -33,10 +46,16 @@ Sugestão aprovada e o evento dela existem ou somem juntos: excluir o evento
 (`removeDailyScheduleEvent`) apaga a sugestão, e apagar a sugestão (`removeSuggestion`) tira o
 evento. Sem isso, uma sugestão "aprovada" sem evento voltava a aparecer como card no kanban.
 
-A LLM nunca vê nem escreve `source`: ela devolve eventos com `voucher_id`
-(`voucherScheduleResultSchema`) e `schedule-merge.ts` converte, junta e remove. Por isso nenhuma
-reconstrução a partir de vouchers pode apagar uma sugestão aprovada ou um evento manual — o código
-só mexe em eventos `voucher`.
+`source` diz quem CRIOU o card e não muda quando um voucher o enriquece. Além dele, só no formato
+gravado:
+
+- `linked_voucher_ids` — vouchers que enriqueceram o card depois (o de `source` não entra).
+- `removed_vouchers` — `[{ voucher_id, removed_at }]`, vouchers do card que foram excluídos. Enquanto
+  tiver item, o card aparece como "voucher excluído, aguardando decisão".
+
+`eventVoucherIds(event)` = os vouchers que sustentam o card hoje (`source` + `linked`, menos os
+excluídos). A LLM nunca vê nem escreve esses campos: ela devolve operações e `schedule-merge.ts`
+aplica.
 
 ## Os três pontos de entrada
 
@@ -44,24 +63,46 @@ Todos dentro de `withTravelScheduleLock` (serializa escritas da mesma viagem, ve
 `services/travel-db.ts`).
 
 - **Voucher criado ou atualizado** — `updateDailyScheduleForVoucher` (`rebuild-daily-schedule.ts`),
-  disparado por `routes/voucher-routes.ts` e pelas tools de voucher do Ori. Tira os eventos antigos
-  daquele voucher (`withoutVoucher`) e pede à LLM só os eventos DELE (`buildVoucherEvents`), com o
-  resto do dia a dia como contexto só de leitura. Os outros vouchers não passam pela LLM de novo.
-  Os eventos novos voltam pra posição que os antigos ocupavam no mesmo dia/período
-  (`replaceVoucherEvents`), em vez de irem pro fim — mantém a ordem que o consultor arrumou no kanban.
-  Dia/período em que o voucher ainda não tinha evento: vai pro fim.
-- **Voucher excluído** — `removeVoucherFromDailySchedule`: só remove os eventos daquele
-  `voucher_id`. **Sem chamada de IA.**
-- **Gerar sob demanda** — `generateDailySchedule` (`generate-daily-schedule.ts`): refaz TODOS os
-  eventos de voucher do zero (`buildVoucherSchedule`) e junta as sugestões/eventos manuais que já
-  existiam. Única função usada pela rota `POST /travel_agent/daily-schedule` (botão do front) e pela
-  tool `gerarDiaADia` do Ori. Devolve `{ days, response, analysedDocIds }` — `response` é o array
-  serializado (contrato que o front já espera); `analysedDocIds` vem das tool calls de
-  `openVoucher` de verdade, não de uma lista preenchida pela LLM.
+  disparado por `routes/voucher-routes.ts` e pelas tools de voucher do Ori. A LLM recebe o dia a dia
+  atual COM o conteúdo dos cards (`formatScheduleCards`, com `index` e `deste_voucher`) e devolve
+  operações (`buildVoucherOperations`, `voucherOperationsResultSchema`):
+  - `enrich` (date/period/index de um card existente) — `content` = o texto ATUAL do card atualizado
+    (mantém o que o consultor escreveu, troca o que o voucher comprova diferente ou pendente, acrescenta
+    o novo) e substitui o texto; `title` só se o voucher contradiz um dado dele; `place` se mudou;
+    `observation` com o que mudou e o valor antigo ("Horário atualizado pelo voucher Casa Flo: 20h →
+    16h"), acrescentada à que já existe. `applyVoucherOperations` liga o voucher (`linked_voucher_ids`)
+    e tira a marca de voucher excluído, se houver. Dia e posição nunca mudam.
+  - `create` — card novo com `source` do voucher, na posição cronológica pedida (`index`) ou no fim.
+  - **Mesmo compromisso em outra data não é o mesmo card**: `create` na data do voucher com
+    `observation` apontando o card parecido + `enrich` só com `observation` no card parecido. Nenhum
+    card se move sozinho.
+  - **Na dúvida, `create`**: um card a mais o consultor apaga; um card errado enriquecido ele pode nem
+    perceber.
+  - Voucher atualizado: enriquece os cards `deste_voucher` só com o que mudou (a mudança vai em
+    `observation`). Sem nada novo, nenhuma operação.
+  - Referência inválida (dia/período/index que não existe, create sem título/conteúdo) é ignorada e
+    logada — nunca escreve num card errado. `travel_insurance` nem chama a LLM (`isRelevant`).
+- **Voucher excluído** — `removeVoucherFromDailySchedule` → `markVoucherRemoved`: nenhum card sai.
+  Os cards sustentados por ele ganham `removed_vouchers` e o voucher sai de `linked_voucher_ids`.
+  **Sem chamada de IA.** O consultor decide: remover (`removeDailyScheduleEvent`, rota `DELETE
+  /travel_agent/daily-schedule/event`, tool `removerEventoDiaADia`) ou manter
+  (`keepDailyScheduleEvent`, rota `POST /travel_agent/daily-schedule/event/keep`, tool
+  `manterEventoSemVoucher`) — manter tira a marca e, se o card foi criado pelo voucher excluído, ele
+  vira `manual`. Um voucher enviado de novo que encaixa num card marcado tira a marca.
+- **Refazer o dia a dia** — `generateDailySchedule` (`generate-daily-schedule.ts`): refaz do zero
+  SÓ os cards de voucher (`rebuildVoucherEvents` → `buildVoucherSchedule`) — edições feitas neles se
+  perdem — e junta de volta o que não veio de voucher (`keptEventsOnly`/`isKeptOnRebuild`: sugestões
+  aprovadas, chat, à mão), intacto, com os títulos de dia editados (`keepEditedTitles`). Os cards que
+  ficam vão pra LLM como contexto: um card que fica pode já ser o compromisso de um voucher (a sugestão
+  do restaurante enriquecida pela reserva), e aí ela não cria outro. Sugestões, vouchers, Contexto da
+  Viagem e memória da viagem não mudam. Única função usada pela rota `POST
+  /travel_agent/daily-schedule` (botão do front) e pela tool `gerarDiaADia` do Ori (cujo cartão de
+  aprovação, `describeScheduleRebuild` em `agents/ori/ori-agent.ts`, diz quantos cards são refeitos e
+  o que fica). Mudança de voucher **nunca** chama isto. Devolve `{ days, response, analysedDocIds }` —
+  `response` é o array serializado (contrato que o front já espera).
 
-**Linhas antigas** (gravadas antes de `source` existir): `hasUntaggedEvents` detecta eventos sem
-origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de voucher do zero uma vez
-(`rebuildVoucherEvents`). Eventos antigos com `suggested: true` contam como sugestão (mantidos).
+**Linhas antigas** (gravadas antes de `source` existir) não disparam mais reconstrução: os cards delas
+são enriquecidos como qualquer outro. Eventos antigos com `suggested: true` contam como sugestão.
 
 ## Formato gravado
 
@@ -70,11 +111,11 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   mostrando a viagem inteira.
 - O título do dia (subtítulo da coluna no kanban) pode ser editado à mão
   (`PATCH /travel_agent/daily-schedule/day` → `updateDailyScheduleDayTitle`, `services/travel-db.ts`).
-  O dia fica com `title_edited: true` e nenhuma junção troca mais esse título: nem a atualização por
-  voucher (`replaceVoucherEvents`, `mergeDays`), nem a remoção de evento (`filterEvents`), nem a
-  reconstrução do zero (`keepEditedTitles` em `rebuildVoucherEvents`). Título vazio volta ao
-  automático (primeiro evento do dia) e tira a marca. Se o dia ficar sem eventos, ele sai da lista e o
-  título editado vai junto.
+  O dia fica com `title_edited: true` e nenhuma junção troca mais esse título (`mergeDays`,
+  `filterEvents`). Encaixar um voucher nunca troca título de dia que já existe; dia novo nasce com o
+  título do primeiro card. Refazer o dia a dia também mantém. Título vazio volta ao automático
+  (primeiro evento do dia) e tira a marca. Se o dia ficar sem eventos, ele sai da lista e o título
+  editado vai junto.
 - `travel_start_at`/`travel_end_at` = primeiro e último dia com evento (`scheduleRange`),
   recalculados a cada escrita — encolhem quando um voucher sai.
 - A ordem dos eventos dentro de um período é a cronologia (eventos não têm horário estruturado).
@@ -94,25 +135,29 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   longo) ganha um evento "Chegada do voo X em Y" no dia da chegada. Os dois têm o mesmo `voucher_id` do
   voo, então somem junto com ele. Regra só no prompt (`COMMON_RULES`) — o voucher não tem horário
   estruturado pro código conferir.
-- `date` que a LLM devolve é validado (`YYYY-MM-DD` e dia existente, `voucherScheduleResultSchema`).
+- `date` que a LLM devolve é validado (`YYYY-MM-DD` e dia existente, `voucherScheduleResultSchema` e
+  `voucherOperationsResultSchema`).
   O formato gravado não valida, de propósito: uma linha antiga com data ruim faria `readScheduleDays`
   tratar o dia a dia inteiro como vazio.
-- Um evento por voucher: se dois vouchers descrevem o mesmo acontecimento (ex: o mesmo voo), cada um
-  tem o seu evento, com `observation` apontando o outro. Assim excluir um voucher nunca leva junto
-  informação que veio de outro.
+- Refazer do zero: um evento por voucher — se dois vouchers descrevem o mesmo acontecimento (ex: o
+  mesmo voo), cada um tem o seu evento, com `observation` apontando o outro. Encaixar é diferente: o
+  segundo voucher enriquece o card que já existe, e excluir um deles só marca o card.
 
 ## Tradeoffs conhecidos
 
-- Editar título/conteúdo ou mover um evento de voucher (`updateDailyScheduleEvent`) mantém a origem
-  `voucher` — se aquele voucher for atualizado ou o dia a dia for regenerado, os eventos dele são
-  refeitos a partir do voucher e a edição se perde. Edições em eventos de OUTROS vouchers, sugestões
-  e eventos manuais sobrevivem.
+- Atualizar depende da LLM manter o que o consultor escreveu (o prompt manda, o código não tem como
+  conferir). A `observation` registra o que o voucher mudou, com o valor antigo, pra nada passar
+  despercebido.
+- Um card de voucher que o consultor removeu à mão pode voltar se aquele voucher for atualizado (não
+  há card pra enriquecer, então cria de novo).
+- A LLM decide se um voucher é o mesmo compromisso de um card; errar pro lado de criar é de propósito.
 - A conexão fica presa na transação durante a chamada de IA (lock). Aceitável pro volume atual.
 
 ## Arquivos desta pasta
 
-- `schema.ts` — formato gravado (`dailyScheduleSchema`, com `source`) e formato da LLM
-  (`voucherScheduleResultSchema`, com `voucher_id`).
+- `schema.ts` — formato gravado (`dailyScheduleSchema`, com `source`/`linked_voucher_ids`/
+  `removed_vouchers`) e os formatos da LLM (`voucherScheduleResultSchema` do zero, com `voucher_id`;
+  `voucherOperationsResultSchema` pra encaixar).
 - `event-format.ts` — as regras de escrita de TODO evento (gerador, sugestões, tools do Ori): um evento
   gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara e as mesmas regras. Mude só
   aqui. `EVENT_CONTENT_FORMAT` (resumo) + `EVENT_FORMAT_GUIDE` (guia completo): o card é um resumo do
@@ -125,11 +170,12 @@ origem e, nesse caso, qualquer um dos três caminhos reconstrói os eventos de v
   `EVENT_SOURCE_SUGGESTION` (sugestões). `EVENT_DETAILS`/`eventDetailGaps` = o mínimo por tipo (o
   horário), pra tool `detalharEvento`. `normalizeEventContent(content, title)` roda em toda gravação:
   quebra de linha do markdown + tira linhas cujo valor só repete o título (rede de segurança).
-- `schedule-merge.ts` — funções puras de junção (`withoutVoucher`, `replaceVoucherEvents`, `keptEventsOnly`, `mergeDays`,
-  `toStoredDays`, `insertEventIntoDays`, `scheduleRange`, `hasUntaggedEvents`).
-- `daily-schedule-agent.ts` — o `Agent` + `buildVoucherSchedule` (do zero) e `buildVoucherEvents`
-  (um voucher).
-- `prompts/system-prompt.ts` — instructions/mensagem dos dois modos, com as regras comuns
+- `schedule-merge.ts` — funções puras de junção (`applyVoucherOperations`, `markVoucherRemoved`,
+  `eventVoucherIds`, `keptEventsOnly`, `keepEditedTitles`, `mergeDays`, `toStoredDays`, `insertEventIntoDays`,
+  `scheduleRange`, `ongoingStays`).
+- `daily-schedule-agent.ts` — o `Agent` + `buildVoucherSchedule` (do zero) e `buildVoucherOperations`
+  (encaixar um voucher).
+- `prompts/system-prompt.ts` — instructions/mensagem dos dois modos (do zero e encaixar), com as regras comuns
   (`COMMON_RULES`).
 - `rebuild-daily-schedule.ts` — `updateDailyScheduleForVoucher`, `removeVoucherFromDailySchedule`,
   `rebuildVoucherEvents`, `isRelevant` (filtro de `travel_insurance`, aplicado em código).

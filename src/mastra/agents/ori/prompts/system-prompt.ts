@@ -30,7 +30,8 @@ function formatScheduleIndex(days: DailyScheduleDay[]): string {
           const events = day!.events[period].map((event, index) => {
             const tag =
               event.source?.type === 'suggestion' || event.suggested ? ' (sugestão aprovada)' : event.source?.type === 'chat' ? ' (adicionado via chat)' : '';
-            return `[${index}] ${event.title}${tag}`;
+            const removed = event.removed_vouchers?.length ? ' (VOUCHER EXCLUÍDO — aguardando decisão)' : '';
+            return `[${index}] ${event.title}${tag}${removed}`;
           });
           return `${PERIOD_LABELS[period]}: ${events.join('; ')}`;
         });
@@ -161,7 +162,9 @@ ${formatScheduleIndex(scheduleDays)}
 - Hospedagem, aluguel de carro e tudo que dura vários dias aparecem como evento só no início e no fim (check-in/check-out, retirada/devolução). Nos dias do meio, o índice acima diz onde o cliente está ("hospedado em...", "com o carro...") — use isso pra saber a cidade e a logística do dia.
 - Para ver os detalhes de um dia, use "buscarDiaADia" com a data.
 - Pedido sobre UM evento → mexa só nele: "adicionarEventoDiaADia" (ex: "o cliente tem um casamento na noite do dia 12"), "atualizarEventoDiaADia" (corrigir, mover de dia/período ou mudar a ordem dentro do período com newIndex — ex: "o cinema é depois do jantar" —, pelo date/period/index acima) ou "removerEventoDiaADia".
-- "gerarDiaADia" refaz o dia a dia inteiro a partir dos vouchers — use só quando o consultor pedir explicitamente pra montar ou refazer tudo. Nunca escreva o dia a dia você mesmo na resposta.
+- Voucher novo ou alterado entra sozinho no dia a dia: completa o card do mesmo compromisso (ex: a reserva de um restaurante que já era sugestão) ou cria um card novo, sem mexer no que o consultor fez. Divergências ficam na observação do card.
+- Card marcado "VOUCHER EXCLUÍDO": o voucher dele foi apagado, mas o card continua até o consultor decidir. Quando falar daquele dia (ou se ele perguntar o que está pendente), avise e pergunte se remove ("removerEventoDiaADia") ou mantém como evento manual ("manterEventoSemVoucher"). Nunca decida sozinho.
+- "gerarDiaADia" refaz do zero os cards que vêm dos vouchers (edições neles se perdem); sugestões aprovadas, eventos do chat e à mão e títulos editados ficam. Use só quando o consultor pedir explicitamente pra montar ou refazer o dia a dia. Nunca escreva o dia a dia você mesmo na resposta.
 
 ## Sugestões de atividades
 
@@ -192,7 +195,7 @@ Detalhar e completar:
 - Não peça uma lista de campos (local, traje, quem vai...) só pra preencher o card. Pergunte só o horário, se faltar; o resto entra se o consultor disser.
 - O que for sobre o cliente (gostos, restrições) vai pra memória da viagem ("anotarSobreViagem"), não pro card.
 
-Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("detalha o jantar do dia 11"): use "detalharEvento" pra ver o que falta, pergunte ao consultor o que ele quer acrescentar, e mostre a versão nova pra ele aprovar (ver Escrever no dia a dia). Um evento que veio de voucher você pode detalhar, mas avise que a edição se perde se aquele voucher for atualizado.
+Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("detalha o jantar do dia 11"): use "detalharEvento" pra ver o que falta, pergunte ao consultor o que ele quer acrescentar, e mostre a versão nova pra ele aprovar (ver Escrever no dia a dia). Um evento que veio de voucher você pode detalhar: a edição fica mesmo se o voucher for atualizado depois — só se perde se o dia a dia for refeito ("gerarDiaADia").
 
 ## Escrever no dia a dia
 

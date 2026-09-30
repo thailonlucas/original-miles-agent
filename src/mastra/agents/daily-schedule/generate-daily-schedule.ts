@@ -9,9 +9,10 @@ export interface DailyScheduleGeneration {
   analysedDocIds: string[];
 }
 
-// Regenera o dia a dia sob demanda: refaz todos os eventos de voucher do zero, mantendo sugestões
-// aprovadas e eventos manuais. Única função usada tanto pela rota `POST
-// /travel_agent/daily-schedule` quanto pela tool `gerarDiaADia` do Ori.
+// "Refazer o dia a dia": refaz do zero os cards de voucher (edições feitas neles se perdem) e mantém
+// sugestões aprovadas, eventos do chat e à mão e títulos editados. Mudança de voucher NUNCA chama isto
+// (ela só encaixa, ver `updateDailyScheduleForVoucher`). Única função usada pela rota `POST
+// /travel_agent/daily-schedule` (botão do front) e pela tool `gerarDiaADia` do Ori.
 export async function generateDailySchedule(tenantId: string, travelId: string, userId: string): Promise<DailyScheduleGeneration> {
   return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const currentDays = await readScheduleDays(tenantId, travelId, client);

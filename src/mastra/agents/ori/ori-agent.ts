@@ -3,6 +3,7 @@ import { Memory } from '@mastra/memory';
 import { RequestContext } from '@mastra/core/request-context';
 import { getDailyScheduleEvent, getSuggestions, getTravelMemory, getTravelSchedule, getTravelSummary, getVoucherSummaries } from '../../services/travel-db';
 import { dailyScheduleSchema } from '../daily-schedule/schema';
+import { isKeptOnRebuild } from '../daily-schedule/schedule-merge';
 import type { SchedulePeriod } from '../daily-schedule/schedule-merge';
 import { buildOriInstructions } from './prompts/system-prompt';
 import { oriResultSchema, type OriResponse, type OriResult } from './schema';
@@ -21,6 +22,7 @@ import { addSuggestionToScheduleTool } from './tools/add-suggestion-to-schedule-
 import { generateDailyScheduleTool } from './tools/generate-daily-schedule-tool';
 import { addDailyScheduleEventTool } from './tools/add-daily-schedule-event-tool';
 import { removeDailyScheduleEventTool } from './tools/remove-daily-schedule-event-tool';
+import { keepDailyScheduleEventTool } from './tools/keep-daily-schedule-event-tool';
 import { createSuggestionTool } from './tools/create-suggestion-tool';
 import { updateSuggestionTool } from './tools/update-suggestion-tool';
 import { removeSuggestionTool } from './tools/remove-suggestion-tool';
@@ -59,6 +61,7 @@ const WRITE_TOOL_IDS = new Set<string>([
   generateDailyScheduleTool.id,
   addDailyScheduleEventTool.id,
   removeDailyScheduleEventTool.id,
+  keepDailyScheduleEventTool.id,
   createSuggestionTool.id,
   updateSuggestionTool.id,
   removeSuggestionTool.id,
@@ -87,6 +90,7 @@ export const oriAgent = new Agent({
     adicionarEventoDiaADia: addDailyScheduleEventTool,
     atualizarEventoDiaADia: updateDailyScheduleEventTool,
     removerEventoDiaADia: removeDailyScheduleEventTool,
+    manterEventoSemVoucher: keepDailyScheduleEventTool,
     buscarContextoViagem: getTravelContextTool,
     anotarSobreViagem: noteTravelMemoryTool,
     corrigirAnotacaoViagem: correctTravelMemoryTool,
@@ -138,6 +142,29 @@ function webSearchApprovalQuestion(query: string): string {
   ].join('\n');
 }
 
+// Cartão de "refazer o dia a dia": os cards de voucher são refeitos (edições neles se perdem) e o
+// resto fica — o cartão diz os números desta viagem, não um aviso genérico.
+async function describeScheduleRebuild(tenantId: string, travelId: string): Promise<string> {
+  const schedule = await getTravelSchedule(tenantId, travelId);
+  const parsed = dailyScheduleSchema.safeParse(schedule.dailySchedule);
+  const days = parsed.success ? parsed.data : [];
+  const events = days.flatMap((d) => [...d.events.morning, ...d.events.afternoon, ...d.events.night]);
+  const rebuilt = events.filter((e) => !isKeptOnRebuild(e)).length;
+  const kept = events.length - rebuilt;
+  const editedTitles = days.filter((d) => d.title_edited).length;
+
+  const stays = [
+    kept ? `${kept} card(s) de sugestões aprovadas, do chat ou adicionados à mão` : null,
+    editedTitles ? `${editedTitles} título(s) de dia editado(s)` : null,
+  ].filter(Boolean);
+  return [
+    'Confirma que quer refazer do zero os cards que vêm dos vouchers?',
+    '',
+    `• ${rebuilt} card(s) de voucher são refeitos a partir dos vouchers: edições feitas neles (texto, dia, ordem) se perdem.`,
+    ...(stays.length ? [`• Ficam como estão: ${stays.join(' e ')}.`] : []),
+  ].join('\n');
+}
+
 async function describePendingApproval(tenantId: string, travelId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
   if (toolName === decideSuggestionTool.id) {
     const suggestion = (await getSuggestions(tenantId, travelId)).find((s) => s.id === args.suggestionId);
@@ -165,6 +192,14 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
   if (toolName === addDailyScheduleEventTool.id) {
     return `Confirma que quer adicionar "${args.title}" ao dia a dia (${describeSlot(args.date, args.period)})?`;
   }
+  if (toolName === keepDailyScheduleEventTool.id) {
+    const event =
+      typeof args.date === 'string' && typeof args.index === 'number'
+        ? await getDailyScheduleEvent(tenantId, travelId, args.date, args.period as SchedulePeriod, args.index)
+        : null;
+    const what = event ? `"${event.title}" (${describeSlot(args.date, args.period)})` : `o evento de ${describeSlot(args.date, args.period)}`;
+    return `Confirma que quer manter ${what} no dia a dia, mesmo sem o voucher? Ele passa a ser um evento manual.`;
+  }
   if (toolName === updateDailyScheduleEventTool.id || toolName === removeDailyScheduleEventTool.id) {
     const event =
       typeof args.date === 'string' && typeof args.index === 'number'
@@ -180,7 +215,7 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
     return webSearchApprovalQuestion(String(args.query ?? ''));
   }
   if (toolName === generateDailyScheduleTool.id) {
-    return 'Confirma que quer regenerar o dia a dia a partir de todos os vouchers? Sugestões aprovadas são mantidas, mas edições feitas à mão em eventos de voucher são refeitas.';
+    return describeScheduleRebuild(tenantId, travelId);
   }
   return `Confirma que quer executar "${toolName}"?`;
 }

@@ -29,6 +29,7 @@ import {
   dailyScheduleDayUpdateRoute,
   dailyScheduleEventCreateRoute,
   dailyScheduleEventDeleteRoute,
+  dailyScheduleEventKeepRoute,
   dailyScheduleEventUpdateRoute,
 } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
@@ -103,6 +104,7 @@ export const mastra = new Mastra({
       dailyScheduleEventUpdateRoute,
       dailyScheduleEventCreateRoute,
       dailyScheduleEventDeleteRoute,
+      dailyScheduleEventKeepRoute,
       dailyScheduleDayUpdateRoute,
       oriChatRoute,
       oriApprovalRoute,

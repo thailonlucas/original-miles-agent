@@ -15,8 +15,8 @@ export const updateDailyScheduleEventTool = createTool({
   requireApproval: true,
   description:
     'Corrige o título/conteúdo de UM evento do dia a dia e/ou move ele pra outro dia, período ou posição dentro do período, sem mexer no resto. Localize o ' +
-    'evento pelo date/period/index do resumo do dia a dia (ou de "buscarDiaADia"). Só envie o que muda. Atenção: um evento que vem ' +
-    'de voucher é refeito a partir do voucher se ele for atualizado ou o dia a dia regenerado. ' +
+    'evento pelo date/period/index do resumo do dia a dia (ou de "buscarDiaADia"). Só envie o que muda. A edição fica mesmo que o ' +
+    'voucher do evento seja atualizado depois (ele atualiza a partir do card); só se perde se o dia a dia for refeito. ' +
     PREVIEW_BEFORE_WRITE,
   inputSchema: z
     .object({

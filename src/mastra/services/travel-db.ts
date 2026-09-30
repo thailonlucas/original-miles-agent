@@ -435,8 +435,9 @@ export async function updateDailyScheduleDayTitle(
 }
 
 // Remove UM evento do dia a dia, localizado por (date, period, index) — tira o dia da lista se ele
-// ficar vazio. Um evento de voucher removido assim volta se aquele voucher for atualizado ou o dia a
-// dia for regenerado (a origem dele continua sendo o voucher); pra tirar de vez, exclua o voucher.
+// ficar vazio. Também é a decisão "remover" de um card marcado como voucher excluído. Um evento de
+// voucher removido assim pode voltar se aquele voucher for atualizado (não há mais card pra
+// enriquecer, então ele cria de novo) ou se o dia a dia for refeito.
 export async function removeDailyScheduleEvent(
   tenantId: string,
   travelId: string,
@@ -474,6 +475,40 @@ export async function removeDailyScheduleEvent(
       await saveSuggestions(tenantId, travelId, suggestions.filter((s) => s.id !== suggestionId), client);
     }
     return removed;
+  });
+}
+
+// Decisão "manter" de um card marcado como voucher excluído (`removed_vouchers`, ver
+// `markVoucherRemoved` em `schedule-merge.ts`): a marca sai e, se o card tinha sido criado pelo
+// voucher excluído, ele vira evento manual — nenhuma mudança de voucher mexe mais nele por essa
+// origem. Devolve `null` se o evento não existe e `{ event, changed: false }` se ele não estava marcado.
+export async function keepDailyScheduleEvent(
+  tenantId: string,
+  travelId: string,
+  userId: string,
+  date: string,
+  period: 'morning' | 'afternoon' | 'night',
+  index: number,
+): Promise<{ event: DailyScheduleEvent; changed: boolean } | null> {
+  return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
+    const state = await getTravelSchedule(tenantId, travelId, client);
+    const parsed = dailyScheduleSchema.safeParse(state.dailySchedule);
+    if (!parsed.success) return null;
+
+    const day = parsed.data.find((d) => d.date === date);
+    const current = day?.events[period][index];
+    if (!day || !current) return null;
+    if (!current.removed_vouchers?.length) return { event: current, changed: false };
+
+    const removedIds = new Set(current.removed_vouchers.map((r) => r.voucher_id));
+    const { removed_vouchers: _cleared, ...rest } = current;
+    const event: DailyScheduleEvent =
+      current.source?.type === 'voucher' && removedIds.has(current.source.voucher_id) ? { ...rest, source: { type: 'manual' } } : rest;
+
+    const list = day.events[period].map((e, i) => (i === index ? event : e));
+    const newDays = parsed.data.map((d) => (d === day ? { ...d, events: { ...d.events, [period]: list } } : d));
+    await saveTravelSchedule(tenantId, travelId, { ...state, dailySchedule: newDays }, client);
+    return { event, changed: true };
   });
 }
 

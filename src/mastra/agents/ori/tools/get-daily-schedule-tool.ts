@@ -51,7 +51,14 @@ export const getDailyScheduleTool = createTool({
         date: day.date,
         title: day.title,
         events: PERIODS.flatMap((period) =>
-          day.events[period].map((event, index) => ({ period, index, title: event.title, type: event.type, origin: event.source?.type ?? 'voucher' })),
+          day.events[period].map((event, index) => ({
+            period,
+            index,
+            title: event.title,
+            type: event.type,
+            origin: event.source?.type ?? 'voucher',
+            ...(event.removed_vouchers?.length ? { voucher_removed: true } : {}),
+          })),
         ),
         ...ongoingOn(day.date),
       })),

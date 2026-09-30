@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_VOUCHER, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from './event-format';
 
-// De onde veio um evento do dia a dia. É o que permite o código (e não a LLM) decidir o que fica
-// e o que sai quando um voucher muda: eventos de voucher são regerados/removidos pelo `voucher_id`;
-// todo o resto (sugestão aprovada, evento criado no chat pelo Ori, evento criado à mão pelo app)
-// nunca é tocado por uma reconstrução a partir de vouchers.
+// De onde veio (quem criou) um evento do dia a dia. Voucher novo/atualizado nunca recria nem
+// substitui um card — só enriquece o que já existe ou cria um card novo (ver AGENTS.md desta pasta);
+// só "refazer o dia a dia" (`generateDailySchedule`) começa do zero.
 export const dailyScheduleEventSourceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('voucher'), voucher_id: z.string() }),
   z.object({ type: z.literal('suggestion'), suggestion_id: z.string() }),
@@ -35,6 +34,12 @@ export const dailyScheduleEventSchema = z.object({
   place: z.string().nullable().optional(),
   source: dailyScheduleEventSourceSchema.optional(),
   suggested: z.boolean().optional(),
+  // Vouchers que enriqueceram este card depois de criado (ex: a reserva de um restaurante que já era
+  // sugestão aprovada). O voucher de `source` não entra aqui. Só no formato gravado.
+  linked_voucher_ids: z.array(z.string()).optional(),
+  // Vouchers deste card (de `source` ou de `linked_voucher_ids`) que foram excluídos. O card não sai
+  // sozinho: fica marcado até o consultor decidir remover ou manter (`keepDailyScheduleEvent`).
+  removed_vouchers: z.array(z.object({ voucher_id: z.string(), removed_at: z.string() })).optional(),
 });
 
 export const dailyScheduleDaySchema = z.object({
@@ -97,8 +102,48 @@ export const voucherScheduleResultSchema = z.object({
   days: z.array(voucherDaySchema).describe('Só os dias que têm pelo menos um evento, em ordem cronológica.'),
 });
 
+// Modo "encaixar" (voucher criado ou atualizado, `buildVoucherOperations`): a LLM não devolve dias,
+// devolve operações sobre o dia a dia atual. Objeto plano, campos null quando não se aplicam — o
+// código valida cada referência (`applyVoucherOperations`, `schedule-merge.ts`).
+const voucherOperationSchema = z.object({
+  action: z
+    .enum(['enrich', 'create'])
+    .describe('"enrich": completa um card que já existe (o mesmo compromisso). "create": card novo, quando não existe card desse compromisso.'),
+  date: llmDateSchema.describe('enrich: data do card existente. create: data do card novo.'),
+  period: z.enum(['morning', 'afternoon', 'night']).describe('enrich: período do card existente. create: período do card novo.'),
+  index: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .describe('enrich: index do card existente no período. create: posição em que o card novo entra no período (0 = primeiro), pela ordem cronológica; null = no fim.'),
+  title: z
+    .string()
+    .nullable()
+    .describe(`create: ${EVENT_TITLE_FORMAT} enrich: o título do card com a correção, SÓ se ele tiver um dado que o voucher contradiz (ex: horário no título); senão null (mantém).`),
+  content: z
+    .string()
+    .nullable()
+    .describe(
+      `create: ${EVENT_CONTENT_FORMAT} ${EVENT_SOURCE_VOUCHER} enrich: o texto do card atualizado, partindo do texto ATUAL dele: mantenha tudo que o consultor escreveu, troque só o que o voucher comprova diferente ou que estava pendente ("a confirmar" → "16h") e acrescente o que o voucher traz de novo, no mesmo formato. Substitui o texto do card. null se nada muda.`,
+    ),
+  type: z.string().nullable().describe(`create: ${EVENT_TYPE_FORMAT} É o voucher_type_slug do voucher. enrich: null.`),
+  place: z.string().nullable().describe('Onde acontece (lugar e cidade), como está no voucher. enrich: só se o card não tiver "place" ou o voucher disser outro lugar. null se não muda.'),
+  observation: z
+    .string()
+    .nullable()
+    .describe(
+      'O que o voucher mudou num dado que o consultor tinha escrito, com o valor antigo (ex: "Horário atualizado pelo voucher Nobu: 20h → 13h"), ou um ponto de atenção (card parecido em outra data). Não registre o que só estava pendente ("a confirmar" → 16h) nem o que é novo. Cite o voucher. O código acrescenta à observação que o card já tem. null se não houver.',
+    ),
+});
+
+export const voucherOperationsResultSchema = z.object({
+  operations: z.array(voucherOperationSchema).describe('Uma operação por compromisso do voucher. Vazio se o voucher não gerar evento.'),
+});
+
 export type DailyScheduleEventSource = z.infer<typeof dailyScheduleEventSourceSchema>;
 export type DailyScheduleEvent = z.infer<typeof dailyScheduleEventSchema>;
 export type DailyScheduleDay = z.infer<typeof dailyScheduleDaySchema>;
 export type DailySchedule = z.infer<typeof dailyScheduleSchema>;
 export type VoucherScheduleDay = z.infer<typeof voucherDaySchema>;
+export type VoucherOperation = z.infer<typeof voucherOperationSchema>;

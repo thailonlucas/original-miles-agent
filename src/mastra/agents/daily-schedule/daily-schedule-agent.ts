@@ -2,18 +2,18 @@ import { Agent } from '@mastra/core/agent';
 import { RequestContext } from '@mastra/core/request-context';
 import type { VoucherSummary } from '../../services/travel-db';
 import {
-  buildForVoucherInstructions,
-  buildForVoucherUserMessage,
   buildFromScratchInstructions,
   buildFromScratchUserMessage,
+  buildVoucherOperationsInstructions,
+  buildVoucherOperationsUserMessage,
 } from './prompts/system-prompt';
 import { toStoredDays } from './schedule-merge';
-import { voucherScheduleResultSchema, type DailyScheduleDay } from './schema';
+import { voucherOperationsResultSchema, voucherScheduleResultSchema, type DailyScheduleDay, type VoucherOperation } from './schema';
 import { openVoucherTool } from './tools/open-voucher-tool';
 
-// Só gera eventos de voucher. Juntar com sugestões aprovadas/eventos manuais, remover eventos de um
-// voucher excluído e calcular o range da viagem é trabalho do código (`schedule-merge.ts`,
-// `rebuild-daily-schedule.ts`), não da LLM.
+// Só lê vouchers e propõe: os eventos do zero (`buildVoucherSchedule`) ou as operações pra encaixar
+// um voucher (`buildVoucherOperations`). Aplicar, marcar voucher excluído e calcular o range da viagem
+// é trabalho do código (`schedule-merge.ts`, `rebuild-daily-schedule.ts`), não da LLM.
 export const dailyScheduleAgent = new Agent({
   id: 'daily-schedule',
   name: 'Daily Schedule',
@@ -39,30 +39,34 @@ function openedVoucherIds(toolCalls: { payload: { toolName: string; args?: unkno
   return [...new Set(ids)];
 }
 
+// `keptDays`: os cards que o refazer mantém (não vieram de voucher) — só contexto, pra LLM não criar
+// de novo um compromisso que um deles já cobre.
 export async function buildVoucherSchedule(
   vouchers: VoucherSummary[],
+  keptDays: DailyScheduleDay[],
   tenantId: string,
   summary: string | null,
 ): Promise<{ days: DailyScheduleDay[]; openedVoucherIds: string[] }> {
-  const { object, toolCalls } = await dailyScheduleAgent.generate(buildFromScratchUserMessage(vouchers, summary), {
+  const { object, toolCalls } = await dailyScheduleAgent.generate(buildFromScratchUserMessage(vouchers, keptDays, summary), {
     instructions: buildFromScratchInstructions(),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
   });
   return { days: toStoredDays(object.days), openedVoucherIds: openedVoucherIds(toolCalls) };
 }
 
-// `currentDays` já vem SEM os eventos deste voucher — é só contexto pro agente não repetir o que
-// existe e acertar o título dos dias que ele tocar.
-export async function buildVoucherEvents(
+// Voucher criado ou atualizado: operações sobre o dia a dia atual (enriquecer um card ou criar um),
+// nunca dias inteiros. `structuredOutput` por chamada porque o default do agente é o formato do zero.
+export async function buildVoucherOperations(
   voucherId: string,
   currentDays: DailyScheduleDay[],
   vouchers: VoucherSummary[],
   tenantId: string,
   summary: string | null,
-): Promise<DailyScheduleDay[]> {
-  const { object } = await dailyScheduleAgent.generate(buildForVoucherUserMessage(currentDays, vouchers, voucherId, summary), {
-    instructions: buildForVoucherInstructions(),
+): Promise<VoucherOperation[]> {
+  const { object } = await dailyScheduleAgent.generate(buildVoucherOperationsUserMessage(currentDays, vouchers, voucherId, summary), {
+    instructions: buildVoucherOperationsInstructions(),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
+    structuredOutput: { schema: voucherOperationsResultSchema },
   });
-  return toStoredDays(object.days, voucherId);
+  return object.operations;
 }

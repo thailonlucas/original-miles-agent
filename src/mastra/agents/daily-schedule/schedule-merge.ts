@@ -1,32 +1,25 @@
 import { normalizeEventContent } from './event-format';
-import type { DailyScheduleDay, DailyScheduleEvent, VoucherScheduleDay } from './schema';
+import type { DailyScheduleDay, DailyScheduleEvent, VoucherOperation, VoucherScheduleDay } from './schema';
 
 export type SchedulePeriod = 'morning' | 'afternoon' | 'night';
 
 const PERIODS: readonly SchedulePeriod[] = ['morning', 'afternoon', 'night'];
 
-// Regras de junção do dia a dia, sem LLM e sem banco: a LLM só gera eventos de voucher, e é aqui
-// que se decide o que fica e o que sai quando um voucher muda (ver AGENTS.md desta pasta).
-//
-// - "voucher": veio de um voucher conhecido — é regerado/removido junto com ele.
-// - "kept": sugestão aprovada, evento criado no chat ou à mão — nenhuma reconstrução a partir de
-//   vouchers toca.
-// - "untagged": linha antiga, de antes da proveniência existir — veio de voucher, mas não diz de
-//   qual. Quando aparece, a viagem é reconstruída uma vez do zero e passa a ser toda "voucher"/"kept".
-type EventOrigin = { kind: 'voucher'; voucherId: string } | { kind: 'kept' } | { kind: 'untagged' };
-
-export function eventOrigin(event: DailyScheduleEvent): EventOrigin {
-  if (event.source?.type === 'voucher') return { kind: 'voucher', voucherId: event.source.voucher_id };
-  if (event.source || event.suggested) return { kind: 'kept' };
-  return { kind: 'untagged' };
-}
+// Regras de junção do dia a dia, sem LLM e sem banco (ver AGENTS.md desta pasta). Voucher novo ou
+// atualizado nunca recria nem substitui um card: a LLM devolve operações ("enrich" um card que já
+// existe, "create" um novo) e o código aplica (`applyVoucherOperations`). Voucher excluído só marca
+// os cards dele (`markVoucherRemoved`) — quem decide se o card sai é o consultor. Refazer o dia a dia
+// refaz só os cards de voucher e mantém o resto (`keptEventsOnly`, `keepEditedTitles`).
 
 function allEvents(day: DailyScheduleDay): DailyScheduleEvent[] {
   return PERIODS.flatMap((period) => day.events[period]);
 }
 
-export function hasUntaggedEvents(days: DailyScheduleDay[]): boolean {
-  return days.some((day) => allEvents(day).some((event) => eventOrigin(event).kind === 'untagged'));
+// Vouchers que sustentam um card hoje: o de `source` e os que o enriqueceram, menos os já excluídos.
+export function eventVoucherIds(event: DailyScheduleEvent): string[] {
+  const removed = new Set((event.removed_vouchers ?? []).map((r) => r.voucher_id));
+  const ids = [...(event.source?.type === 'voucher' ? [event.source.voucher_id] : []), ...(event.linked_voucher_ids ?? [])];
+  return [...new Set(ids)].filter((id) => !removed.has(id));
 }
 
 // Mantém só os eventos aprovados por `keep`, e tira da lista os dias que ficaram vazios (o array é
@@ -47,30 +40,28 @@ function filterEvents(days: DailyScheduleDay[], keep: (event: DailyScheduleEvent
   });
 }
 
-export function withoutVoucher(days: DailyScheduleDay[], voucherId: string): DailyScheduleDay[] {
-  return filterEvents(days, (event) => {
-    const origin = eventOrigin(event);
-    return !(origin.kind === 'voucher' && origin.voucherId === voucherId);
-  });
-}
-
 // Tira do dia a dia o evento que uma sugestão aprovada virou (`source.suggestion_id`).
 export function withoutSuggestion(days: DailyScheduleDay[], suggestionId: string): DailyScheduleDay[] {
   return filterEvents(days, (event) => !(event.source?.type === 'suggestion' && event.source.suggestion_id === suggestionId));
 }
 
-export function keptEventsOnly(days: DailyScheduleDay[]): DailyScheduleDay[] {
-  return filterEvents(days, (event) => eventOrigin(event).kind === 'kept');
+// O que "refazer o dia a dia" mantém: tudo que não veio de voucher (sugestão aprovada, chat, à mão).
+// Linha antiga sem `source` conta como voucher (é refeita), e `suggested: true` legado como sugestão.
+export function isKeptOnRebuild(event: DailyScheduleEvent): boolean {
+  return event.source ? event.source.type !== 'voucher' : event.suggested === true;
 }
 
-// Converte a saída da LLM no formato gravado: `voucher_id` vira `source`. `forcedVoucherId` é pra
-// quando a chamada foi sobre UM voucher só — o código já sabe a origem, não depende da LLM acertar.
-export function toStoredDays(llmDays: VoucherScheduleDay[], forcedVoucherId?: string): DailyScheduleDay[] {
+export function keptEventsOnly(days: DailyScheduleDay[]): DailyScheduleDay[] {
+  return filterEvents(days, isKeptOnRebuild);
+}
+
+// Converte a saída da LLM (modo do zero) no formato gravado: `voucher_id` vira `source`.
+export function toStoredDays(llmDays: VoucherScheduleDay[]): DailyScheduleDay[] {
   const days = llmDays.map((day) => {
     const convert = ({ voucher_id, ...event }: VoucherScheduleDay['events']['morning'][number]): DailyScheduleEvent => ({
       ...event,
       content: normalizeEventContent(event.content, event.title),
-      source: { type: 'voucher', voucher_id: forcedVoucherId ?? voucher_id },
+      source: { type: 'voucher', voucher_id },
     });
     return {
       date: day.date,
@@ -108,8 +99,8 @@ export function mergeDays(base: DailyScheduleDay[], incoming: DailyScheduleDay[]
 }
 
 // Devolve `next` com os títulos editados à mão (`title_edited`) de `previous` de volta, nos dias que
-// continuam existindo — pra reconstrução do zero (`rebuildVoucherEvents`), em que os dias novos vêm
-// da LLM e o dia editado pode nem ter um evento mantido pra carregar o título.
+// continuam existindo — pro refazer do zero, em que os dias novos vêm da LLM e o dia editado pode nem
+// ter um evento mantido pra carregar o título.
 export function keepEditedTitles(previous: DailyScheduleDay[], next: DailyScheduleDay[]): DailyScheduleDay[] {
   const edited = new Map(previous.filter((day) => day.title_edited).map((day) => [day.date, day.title]));
   return next.map((day) => (edited.has(day.date) ? { ...day, title: edited.get(day.date)!, title_edited: true } : day));
@@ -134,41 +125,6 @@ export function insertEventIntoDays(
   }
   const newDay: DailyScheduleDay = { date, title: event.title, events: { morning: [], afternoon: [], night: [], [period]: [event] } };
   return mergeDays(days, [newDay], 'base');
-}
-
-// Troca os eventos de UM voucher pelos novos (`incoming`, já só dele) mantendo o lugar que eles
-// ocupavam: num dia/período em que o voucher já tinha evento, os novos entram na posição do primeiro
-// evento antigo dele — o consultor pode ter arrastado o card pra entre dois outros, e atualizar o
-// voucher não deve jogar ele pro fim. Dia/período em que o voucher não estava: vai pro fim (não há
-// posição a manter). O título dos dias tocados vem de `incoming`, como em `mergeDays(..., 'incoming')`
-// — menos nos dias com título editado à mão (`title_edited`).
-export function replaceVoucherEvents(days: DailyScheduleDay[], voucherId: string, incoming: DailyScheduleDay[]): DailyScheduleDay[] {
-  const isFromVoucher = (event: DailyScheduleEvent) => {
-    const origin = eventOrigin(event);
-    return origin.kind === 'voucher' && origin.voucherId === voucherId;
-  };
-  const slot = (date: string, period: SchedulePeriod) => `${date}|${period}`;
-
-  // Índice do primeiro evento do voucher = quantos eventos que ficam vêm antes dele.
-  const anchors = new Map<string, number>();
-  for (const day of days) {
-    for (const period of PERIODS) {
-      const index = day.events[period].findIndex(isFromVoucher);
-      if (index >= 0) anchors.set(slot(day.date, period), index);
-    }
-  }
-
-  let result = withoutVoucher(days, voucherId);
-  for (const day of incoming) {
-    for (const period of PERIODS) {
-      const anchor = anchors.get(slot(day.date, period));
-      day.events[period].forEach((event, i) => {
-        result = insertEventIntoDays(result, day.date, period, event, anchor === undefined ? undefined : anchor + i);
-      });
-    }
-    result = result.map((d) => (d.date === day.date && !d.title_edited ? { ...d, title: day.title } : d));
-  }
-  return result;
 }
 
 interface ApprovedSuggestionLike {
@@ -225,6 +181,95 @@ export function addApprovedSuggestions(
   return { days: result, insertedIds, duplicateIds };
 }
 
+// Aplica as operações do modo "encaixar" (`buildVoucherOperations`) de UM voucher:
+// - "enrich": atualiza o card a partir dele mesmo — o texto do consultor é a base; a LLM devolve o
+//   texto com o que o voucher comprova corrigido e o que ele traz de novo acrescentado (`content`
+//   substitui), o título só se o voucher contradiz um dado dele. Dia e posição nunca mudam. O que o
+//   voucher mudou em algo que o consultor escreveu vai em `observation` (acrescentada à que já
+//   existe), e o voucher entra em `linked_voucher_ids`. Se estava marcado como "voucher excluído", a
+//   marca sai: o card voltou a ter um voucher.
+// - "create": card novo com `source` deste voucher, na posição pedida do período (ou no fim).
+// Referência que não existe (dia/período/index errado) ou create sem título/conteúdo é ignorada e
+// volta em `skipped` — nunca vira uma escrita num card errado.
+export function applyVoucherOperations(
+  days: DailyScheduleDay[],
+  voucherId: string,
+  operations: VoucherOperation[],
+): { days: DailyScheduleDay[]; skipped: VoucherOperation[] } {
+  const skipped: VoucherOperation[] = [];
+  let result = days;
+
+  for (const op of operations.filter((o) => o.action === 'enrich')) {
+    const day = result.find((d) => d.date === op.date);
+    const current = op.index === null ? undefined : day?.events[op.period][op.index];
+    if (!day || !current || op.index === null) {
+      skipped.push(op);
+      continue;
+    }
+    const content = op.content?.trim();
+    const title = op.title?.trim() || current.title;
+    const observation = op.observation?.trim();
+    const linked = current.source?.type === 'voucher' && current.source.voucher_id === voucherId ? current.linked_voucher_ids : [...new Set([...(current.linked_voucher_ids ?? []), voucherId])];
+    const { removed_vouchers: _cleared, ...rest } = current;
+    const enriched: DailyScheduleEvent = {
+      ...rest,
+      title,
+      content: content ? normalizeEventContent(content, title) : current.content,
+      observation: observation ? (current.observation ? `${current.observation}\n${observation}` : observation) : current.observation,
+      ...(op.place ? { place: op.place } : {}),
+      ...(linked?.length ? { linked_voucher_ids: linked } : {}),
+    };
+    const list = day.events[op.period].map((e, i) => (i === op.index ? enriched : e));
+    result = result.map((d) => (d === day ? { ...d, events: { ...d.events, [op.period]: list } } : d));
+  }
+
+  // De trás pra frente dentro de cada período: inserir numa posição não desloca as posições menores,
+  // então os índices pedidos (sobre o dia a dia de antes) continuam valendo.
+  const creates = operations
+    .map((op, order) => ({ op, order }))
+    .filter(({ op }) => op.action === 'create')
+    .sort((a, b) => (b.op.index ?? Infinity) - (a.op.index ?? Infinity) || b.order - a.order);
+  for (const { op } of creates) {
+    if (!op.title?.trim() || !op.content?.trim()) {
+      skipped.push(op);
+      continue;
+    }
+    const event: DailyScheduleEvent = {
+      title: op.title.trim(),
+      content: normalizeEventContent(op.content, op.title),
+      type: op.type ?? 'other',
+      observation: op.observation?.trim() || null,
+      place: op.place,
+      source: { type: 'voucher', voucher_id: voucherId },
+    };
+    result = insertEventIntoDays(result, op.date, op.period, event, op.index ?? undefined);
+  }
+  return { days: result, skipped };
+}
+
+// Voucher excluído: nenhum card sai. Todo card sustentado por ele (`source` ou `linked_voucher_ids`)
+// ganha a marca em `removed_vouchers` e o voucher sai de `linked_voucher_ids` — o consultor decide
+// depois se remove o card (`removeDailyScheduleEvent`) ou mantém (`keepDailyScheduleEvent`).
+export function markVoucherRemoved(days: DailyScheduleDay[], voucherId: string, removedAt: string): { days: DailyScheduleDay[]; marked: number } {
+  let marked = 0;
+  const mark = (event: DailyScheduleEvent): DailyScheduleEvent => {
+    if (!eventVoucherIds(event).includes(voucherId)) return event;
+    marked += 1;
+    const linked = (event.linked_voucher_ids ?? []).filter((id) => id !== voucherId);
+    const { linked_voucher_ids: _previous, ...rest } = event;
+    return {
+      ...rest,
+      ...(linked.length ? { linked_voucher_ids: linked } : {}),
+      removed_vouchers: [...(event.removed_vouchers ?? []), { voucher_id: voucherId, removed_at: removedAt }],
+    };
+  };
+  const result = days.map((day) => ({
+    ...day,
+    events: { morning: day.events.morning.map(mark), afternoon: day.events.afternoon.map(mark), night: day.events.night.map(mark) },
+  }));
+  return { days: marked ? result : days, marked };
+}
+
 // Range da viagem = primeiro e último dia com evento (o array já vem ordenado por `mergeDays`).
 export function scheduleRange(days: DailyScheduleDay[]): { travelStartAt: string | null; travelEndAt: string | null } {
   return { travelStartAt: days[0]?.date ?? null, travelEndAt: days[days.length - 1]?.date ?? null };
@@ -269,12 +314,12 @@ export function ongoingStays(days: DailyScheduleDay[]): Map<string, OngoingStay[
   const spans = new Map<string, { type: string; place: string | null; first: string; last: string }>();
   for (const day of days) {
     for (const event of allEvents(day)) {
-      const origin = eventOrigin(event);
-      if (origin.kind !== 'voucher' || NOT_A_STAY.has(event.type)) continue;
-      const span = spans.get(origin.voucherId);
+      if (event.source?.type !== 'voucher' || NOT_A_STAY.has(event.type)) continue;
+      const voucherId = event.source.voucher_id;
+      const span = spans.get(voucherId);
       const place = event.place ?? span?.place ?? null;
-      if (!span) spans.set(origin.voucherId, { type: event.type, place: place ?? placeFromTitle(event.title), first: day.date, last: day.date });
-      else spans.set(origin.voucherId, { ...span, place: place ?? span.place, first: day.date < span.first ? day.date : span.first, last: day.date > span.last ? day.date : span.last });
+      if (!span) spans.set(voucherId, { type: event.type, place: place ?? placeFromTitle(event.title), first: day.date, last: day.date });
+      else spans.set(voucherId, { ...span, place: place ?? span.place, first: day.date < span.first ? day.date : span.first, last: day.date > span.last ? day.date : span.last });
     }
   }
 

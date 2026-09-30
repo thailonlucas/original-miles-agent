@@ -13,8 +13,8 @@ export const removeDailyScheduleEventTool = createTool({
   requireApproval: true,
   description:
     'Remove UM evento do dia a dia, localizado pelo date/period/index do resumo do dia a dia (ou de "buscarDiaADia"), sem mexer no ' +
-    'resto. Atenção: um evento que vem de voucher volta se aquele voucher for atualizado ou o dia a dia regenerado — pra tirar de ' +
-    'vez, o caminho é excluir o voucher ("deletarDocumento"). ' + PREVIEW_BEFORE_REMOVE,
+    'resto. Também é a decisão "remover" de um card marcado como voucher excluído. Atenção: um evento que vem de voucher pode ' +
+    'voltar se aquele voucher for atualizado ou o dia a dia refeito. ' + PREVIEW_BEFORE_REMOVE,
   inputSchema: z.object({
     date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').describe('Dia do evento.'),
     period: schedulePeriodSchema.describe('Período do evento: "morning", "afternoon" ou "night".'),

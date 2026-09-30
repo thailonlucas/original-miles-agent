@@ -7,8 +7,8 @@ import {
   withTravelScheduleLock,
   type VoucherSummary,
 } from '../../services/travel-db';
-import { buildVoucherEvents, buildVoucherSchedule } from './daily-schedule-agent';
-import { hasUntaggedEvents, keepEditedTitles, keptEventsOnly, mergeDays, replaceVoucherEvents, scheduleRange, withoutVoucher } from './schedule-merge';
+import { buildVoucherOperations, buildVoucherSchedule } from './daily-schedule-agent';
+import { applyVoucherOperations, keepEditedTitles, keptEventsOnly, markVoucherRemoved, mergeDays, scheduleRange } from './schedule-merge';
 import { dailyScheduleSchema, type DailyScheduleDay } from './schema';
 
 // Nunca gera evento — cobertura, não atividade agendada. Filtrado em código (não só no prompt) pra
@@ -31,8 +31,11 @@ export async function saveScheduleDays(tenantId: string, travelId: string, days:
   await saveTravelSchedule(tenantId, travelId, { dailySchedule: days, travelStartAt, travelEndAt }, client);
 }
 
-// Refaz TODOS os eventos de voucher do zero e devolve eles junto com o que não veio de voucher
-// (sugestões aprovadas, eventos manuais), que passa intacto — assim como os títulos de dia editados à mão.
+// "Refazer o dia a dia" (`generateDailySchedule`): refaz do zero SÓ os cards de voucher e junta de
+// volta o que não veio de voucher (sugestões aprovadas, eventos do chat e à mão), que passa intacto —
+// assim como os títulos de dia editados. Os cards mantidos vão pra LLM como contexto: um deles pode
+// já cobrir um compromisso de voucher (a sugestão do restaurante enriquecida pela reserva), e aí ela
+// não cria outro.
 export async function rebuildVoucherEvents(
   tenantId: string,
   travelId: string,
@@ -41,55 +44,40 @@ export async function rebuildVoucherEvents(
 ): Promise<{ days: DailyScheduleDay[]; openedVoucherIds: string[] }> {
   const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
   const summary = await getTravelClientContext(tenantId, travelId, client);
+  const kept = keptEventsOnly(currentDays);
 
-  const fromVouchers = vouchers.length > 0 ? await buildVoucherSchedule(vouchers, tenantId, summary) : { days: [], openedVoucherIds: [] };
+  const fromVouchers = vouchers.length > 0 ? await buildVoucherSchedule(vouchers, kept, tenantId, summary) : { days: [], openedVoucherIds: [] };
 
-  const days = keepEditedTitles(currentDays, mergeDays(fromVouchers.days, keptEventsOnly(currentDays), 'base'));
+  const days = keepEditedTitles(currentDays, mergeDays(fromVouchers.days, kept, 'base'));
   return { days, openedVoucherIds: fromVouchers.openedVoucherIds };
 }
 
-// Voucher criado ou atualizado: tira os eventos antigos dele e gera os novos, no mesmo lugar que os
-// antigos ocupavam — o resto do dia a dia (outros vouchers, sugestões, eventos manuais) não passa
-// pela LLM e não muda.
+// Voucher criado ou atualizado: encaixa no dia a dia que já existe. A LLM devolve operações (enriquecer
+// o card do mesmo compromisso, de qualquer origem, ou criar um card novo) e o código aplica — nenhum
+// card é recriado, substituído, movido ou apagado, então o trabalho do consultor fica intacto. Vale
+// também pra linhas antigas sem `source`: os cards delas são enriquecidos como qualquer outro.
 export async function updateDailyScheduleForVoucher(tenantId: string, travelId: string, voucher: VoucherSummary, userId: string): Promise<void> {
+  if (!isRelevant(voucher)) return;
   await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const currentDays = await readScheduleDays(tenantId, travelId, client);
-
-    // Linha antiga, sem origem nos eventos: não dá pra saber quais eram deste voucher — reconstrói
-    // uma vez do zero, e a viagem passa a ter origem em tudo.
-    if (hasUntaggedEvents(currentDays)) {
-      const { days } = await rebuildVoucherEvents(tenantId, travelId, currentDays, client);
-      await saveScheduleDays(tenantId, travelId, days, client);
-      return;
-    }
-
-    const withoutThisVoucher = withoutVoucher(currentDays, voucher.id);
-    if (!isRelevant(voucher)) {
-      await saveScheduleDays(tenantId, travelId, withoutThisVoucher, client);
-      return;
-    }
-
     const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
     const summary = await getTravelClientContext(tenantId, travelId, client);
-    const newEvents = await buildVoucherEvents(voucher.id, withoutThisVoucher, vouchers, tenantId, summary);
+    const operations = await buildVoucherOperations(voucher.id, currentDays, vouchers, tenantId, summary);
 
-    // `currentDays` (não `withoutThisVoucher`): é dele que sai a posição que os eventos do voucher
-    // ocupavam — eles voltam pro mesmo lugar em vez de ir pro fim do período.
-    await saveScheduleDays(tenantId, travelId, replaceVoucherEvents(currentDays, voucher.id, newEvents), client);
+    const { days, skipped } = applyVoucherOperations(currentDays, voucher.id, operations);
+    if (skipped.length > 0) {
+      console.error(`[dia a dia] voucher ${voucher.id} (viagem ${travelId}): ${skipped.length} operação(ões) ignorada(s)`, JSON.stringify(skipped));
+    }
+    if (days !== currentDays) await saveScheduleDays(tenantId, travelId, days, client);
   });
 }
 
-// Voucher excluído: só tira os eventos dele — sem chamada de IA.
+// Voucher excluído: nenhum card sai — os cards que ele sustentava ficam marcados (`markVoucherRemoved`)
+// até o consultor decidir remover ou manter. Sem chamada de IA.
 export async function removeVoucherFromDailySchedule(tenantId: string, travelId: string, voucherId: string, userId: string): Promise<void> {
   await withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const currentDays = await readScheduleDays(tenantId, travelId, client);
-
-    // Mesmo caso de linha antiga de `updateDailyScheduleForVoucher`: o voucher já saiu do banco,
-    // então reconstruir do zero já não inclui ele.
-    const days = hasUntaggedEvents(currentDays)
-      ? (await rebuildVoucherEvents(tenantId, travelId, currentDays, client)).days
-      : withoutVoucher(currentDays, voucherId);
-
-    await saveScheduleDays(tenantId, travelId, days, client);
+    const { days, marked } = markVoucherRemoved(currentDays, voucherId, new Date().toISOString());
+    if (marked > 0) await saveScheduleDays(tenantId, travelId, days, client);
   });
 }

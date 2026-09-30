@@ -5,6 +5,7 @@ import {
   getTenantIdByEmail,
   getTenantIdByTravelId,
   insertDailyScheduleEvent,
+  keepDailyScheduleEvent,
   removeDailyScheduleEvent,
   updateDailyScheduleDayTitle,
   updateDailyScheduleEvent,
@@ -172,8 +173,9 @@ export const dailyScheduleEventDeleteRoute = registerApiRoute('/travel_agent/dai
   openapi: {
     summary: 'Remove um evento do dia a dia, sem regenerar o resto',
     description:
-      'Body JSON: `travel_id`, `date`, `period`, `index`. Um evento de voucher removido assim volta se o voucher for atualizado ' +
-      'ou o dia a dia regenerado — pra tirar de vez, exclua o voucher. Mesma função da tool `removerEventoDiaADia` do Ori.',
+      'Body JSON: `travel_id`, `date`, `period`, `index`. Também é a decisão "remover" de um card marcado como voucher excluído ' +
+      '(`removed_vouchers`). Um evento de voucher removido assim pode voltar se o voucher for atualizado ou o dia a dia refeito. ' +
+      'Mesma função da tool `removerEventoDiaADia` do Ori.',
     tags: ['Daily Schedule'],
   },
   handler: async (c) => {
@@ -186,6 +188,31 @@ export const dailyScheduleEventDeleteRoute = registerApiRoute('/travel_agent/dai
       return c.json({ error: 'not_found', message: 'Evento não encontrado nesse dia/período/índice.' }, 404);
     }
     return c.json({ removed: true }, 200);
+  },
+});
+
+export const dailyScheduleEventKeepRoute = registerApiRoute('/travel_agent/daily-schedule/event/keep', {
+  method: 'POST',
+  requiresAuth: false,
+  openapi: {
+    summary: 'Mantém um card cujo voucher foi excluído',
+    description:
+      'Body JSON: `travel_id`, `date`, `period`, `index`. Decisão "manter" de um card marcado como voucher excluído ' +
+      '(`removed_vouchers`): a marca sai e, se o card tinha sido criado por esse voucher, ele vira evento manual. Pra remover o ' +
+      'card, use `DELETE /travel_agent/daily-schedule/event`. Devolve `{ event, changed }` (`changed: false` se o card não estava ' +
+      'marcado). Mesma função da tool `manterEventoSemVoucher` do Ori.',
+    tags: ['Daily Schedule'],
+  },
+  handler: async (c) => {
+    const auth = await authorizeEventRequest(c, removeBodySchema);
+    if (auth instanceof Response) return auth;
+    const { tenantId, userId, body } = auth;
+
+    const result = await keepDailyScheduleEvent(tenantId, body.travel_id, userId, body.date, body.period, body.index);
+    if (!result) {
+      return c.json({ error: 'not_found', message: 'Evento não encontrado nesse dia/período/índice.' }, 404);
+    }
+    return c.json(result, 200);
   },
 });
 
@@ -203,7 +230,7 @@ export const dailyScheduleDayUpdateRoute = registerApiRoute('/travel_agent/daily
     summary: 'Edita o título (subtítulo da coluna no kanban) de um dia do roteiro',
     description:
       'Recebe `travel_id`, `date` e `title`. O título editado fica marcado (`title_edited: true`) e não é trocado quando o dia a ' +
-      'dia é atualizado por voucher ou regenerado. `title` vazio volta ao automático (título do primeiro evento do dia). ' +
+      'dia é atualizado por voucher ou refeito. `title` vazio volta ao automático (título do primeiro evento do dia). ' +
       'Devolve o dia atualizado; 404 se o dia não tiver nenhum evento (dias vazios não são gravados).',
     tags: ['Daily Schedule'],
   },

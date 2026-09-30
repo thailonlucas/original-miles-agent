@@ -61,7 +61,7 @@ inteiros na saída a cada edição, gastando tokens à toa (chegou a ser tentado
 `schema.ts` também exporta `OriResponse` = `OriResult` + `updated_data` (boolean). Diferente do
 resto do envelope, `updated_data` **não é preenchido pela LLM** — não está em `oriResultSchema`,
 então o model nunca vê nem escreve esse campo. `askOri` calcula ele depois do `generate()`, olhando
-`toolCalls` (retornado pelo próprio Mastra) contra `WRITE_TOOL_IDS` (a lista das 16 tools de escrita
+`toolCalls` (retornado pelo próprio Mastra) contra `WRITE_TOOL_IDS` (a lista das tools de escrita
 do agente, em `ori-agent.ts`) — `true` se qualquer uma delas foi chamada nesta resposta. É só um
 sinal binário ("o front pode estar desatualizado"), não diz o quê mudou; o consumidor (front) decide
 o que fazer com isso — hoje provavelmente um botão/gatilho de "atualizar" que rebusca o dado
@@ -98,10 +98,13 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   (título, período, index, tipo e origem de cada evento, sem `content`) + `travel_start_at`/
   `travel_end_at`. Com `date`: o dia inteiro, com o `content` completo. Dividido assim pra não
   encher o contexto nem a memória da thread (que guarda o resultado das tools).
-- **`gerarDiaADia`** (`tools/generate-daily-schedule-tool.ts`) — regenera o dia a dia a partir de
-  todos os vouchers chamando `generateDailySchedule` (`agents/daily-schedule/`), a mesma função da
-  rota `POST /travel_agent/daily-schedule`. Mantém sugestões aprovadas e eventos manuais; devolve
-  ao model só um resumo (datas e títulos). **`requireApproval: true`**.
+- **`gerarDiaADia`** (`tools/generate-daily-schedule-tool.ts`) — refaz do zero os cards de voucher,
+  chamando `generateDailySchedule` (`agents/daily-schedule/`), a mesma função da rota `POST
+  /travel_agent/daily-schedule` (botão do front). Edições nos cards de voucher se perdem; sugestões
+  aprovadas, eventos do chat e à mão e títulos editados ficam. Devolve ao model só um resumo (datas e
+  títulos). **`requireApproval: true`** — o cartão (`describeScheduleRebuild`) diz quantos cards são
+  refeitos e o que fica, com os números da viagem. Mudança de voucher nunca passa por aqui (ela só encaixa, ver
+  `agents/daily-schedule/AGENTS.md`).
 - **Um evento por vez, sem regenerar o resto** — as três com `requireApproval: true`, cada uma
   chamando a mesma função da rota equivalente em `routes/daily-schedule-event-routes.ts`:
   - **`adicionarEventoDiaADia`** (`tools/add-daily-schedule-event-tool.ts`) — `insertDailyScheduleEvent`
@@ -115,8 +118,14 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   - **`removerEventoDiaADia`** (`tools/remove-daily-schedule-event-tool.ts`) —
     `removeDailyScheduleEvent` (rota `DELETE`).
 
-  Evento de voucher editado/removido por aqui é refeito se aquele voucher for atualizado ou o dia a
-  dia regenerado — está na description das tools. O prompt roteia "pedido sobre UM evento" pra essas
+  - **`manterEventoSemVoucher`** (`tools/keep-daily-schedule-event-tool.ts`) — `keepDailyScheduleEvent`
+    (rota `POST /travel_agent/daily-schedule/event/keep`): decisão "manter" de um card marcado como
+    voucher excluído (a decisão "remover" é `removerEventoDiaADia`). O índice do prompt mostra esses
+    cards com "(VOUCHER EXCLUÍDO — aguardando decisão)"; o Ori avisa e pergunta, nunca decide sozinho.
+
+  Edição feita por aqui num evento de voucher fica mesmo se o voucher for atualizado (ele só
+  atualiza a partir do card); só se perde se o dia a dia for refeito. Um evento de voucher
+  removido pode voltar se o voucher for atualizado — está na description das tools. O prompt roteia "pedido sobre UM evento" pra essas
   três e deixa `gerarDiaADia` só pra quando o consultor pedir pra refazer tudo (antes, sem tool de
   adicionar, o model caía no `gerarDiaADia` pra qualquer inclusão).
 - **`buscarContextoViagem`** (`tools/get-travel-context-tool.ts`) — abre `travel.summary`
