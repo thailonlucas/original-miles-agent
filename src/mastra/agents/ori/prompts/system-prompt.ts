@@ -1,4 +1,5 @@
 import type { VoucherSummary } from '../../../services/travel-db';
+import { isActiveItem, type TenantMemoryRule, type UserMemoryItem } from '../../../services/ori-memory-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { datesBetween, describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
 import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_CHAT, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT } from '../../daily-schedule/event-format';
@@ -40,10 +41,43 @@ function formatScheduleIndex(days: DailyScheduleDay[]): string {
     .join('\n');
 }
 
-// Seções do prompt, na ordem: quem é o Ori e como conversar → dados da viagem (vouchers, contexto,
+// Memória em camadas (ver `services/ori-memory-db.ts`): regras da agência e preferências deste
+// consultor. O prompt base (este arquivo) é o limite — memória muda estilo e o que perguntar, nunca
+// libera confirmação, invenção de dado ou as regras de formato do dia a dia. Só itens ativos entram:
+// aprendido sozinho só depois de visto em 2+ sessões.
+export interface OriMemory {
+  tenantRules: TenantMemoryRule[];
+  userItems: UserMemoryItem[];
+}
+
+function formatMemorySection(memory: OriMemory): string {
+  const rules = memory.tenantRules.map((r) => `- ${r.required ? '(obrigatória) ' : ''}${r.text}`);
+  const prefs = memory.userItems.filter(isActiveItem).map((i) => `- [${i.id}] ${i.text}`);
+  return `## Regras desta agência
+
+${rules.length ? rules.join('\n') : '(nenhuma)'}
+
+## Como este consultor trabalha
+
+O que você já sabe sobre como ESTE consultor gosta de trabalhar com você — vale em todas as viagens dele. Siga sem comentar.
+
+${prefs.length ? prefs.join('\n') : '(nada ainda)'}
+
+Como usar a memória:
+- Ordem de prioridade: as regras deste prompt > regras obrigatórias da agência > preferências do consultor > regras não obrigatórias da agência. Nenhuma preferência ou regra da agência desliga a confirmação antes de gravar, libera informação fora do voucher/chat ou muda o formato dos eventos do dia a dia — se o consultor pedir algo assim, explique que não dá e siga a regra.
+- Quando o consultor disser como quer que você trabalhe dali pra frente ("sempre...", "nunca...", "prefiro...") ou corrigir a mesma coisa pela segunda vez: aplique na hora E guarde com "anotarPreferenciaConsultor", sem perguntar. Informação do cliente continua indo pro Contexto da Viagem ("anotarContextoViagem"), não pra cá.
+- Pediu pra esquecer, ou pediu o contrário de uma preferência guardada: "esquecerPreferencia" com o id (e, se for o contrário, anote a nova).`;
+}
+
+// Seções do prompt, na ordem: quem é o Ori e como conversar → memória (agência e consultor) → dados da viagem (vouchers, contexto,
 // dia a dia) → como sugerir → como detalhar → como escrever no dia a dia → regras de precisão
 // (datas, passageiros).
-export function buildOriInstructions(vouchers: VoucherSummary[], tripContext: string | null, scheduleDays: DailyScheduleDay[]): string {
+export function buildOriInstructions(
+  vouchers: VoucherSummary[],
+  tripContext: string | null,
+  scheduleDays: DailyScheduleDay[],
+  memory: OriMemory,
+): string {
   const tripContextSection = tripContext
     ? `Perfil do cliente, tipo de viagem e preferências — complementa os vouchers, nunca os substitui:
 
@@ -62,6 +96,8 @@ ${tripContext}
 - Use as tools de leitura (voucher, dia a dia, contexto, sugestões) sempre que precisar de informação pra responder — sem anunciar isso. Pesquise um voucher só quando tiver uma tarefa óbvia para responder.
 - As outras escritas (vouchers, dia a dia, sugestões) só quando o consultor pedir a ação ("adiciona", "muda", "remove", "gera o dia a dia"...) ou reagir a uma sugestão sua (ver Sugestões de atividades, abaixo). Na dúvida se ele quer que você faça ou só está conversando, pergunte.
 - Nunca diga que fez algo que não fez: uma alteração só aconteceu depois que a tool rodou.
+
+${formatMemorySection(memory)}
 
 ## Documentos disponíveis
 

@@ -21,6 +21,7 @@ import { voucherExtractionAgent } from './agents/voucher-extractor/extraction-ag
 import { dailyScheduleAgent } from './agents/daily-schedule/daily-schedule-agent';
 import { scheduleSuggestionAgent } from './agents/schedule-suggestion/schedule-suggestion-agent';
 import { oriAgent } from './agents/ori/ori-agent';
+import { oriMemoryLearnerAgent } from './agents/ori-memory-learner/ori-memory-learner-agent';
 import { voucherExtractRoute, voucherDeleteRoute, voucherListRoute, voucherUpdateRoute } from './routes/voucher-routes';
 import { dailyScheduleGenerateRoute, dailyScheduleGetRoute } from './routes/daily-schedule-routes';
 import {
@@ -31,6 +32,16 @@ import {
 } from './routes/daily-schedule-event-routes';
 import { scheduleSuggestionRoute } from './routes/schedule-suggestion-routes';
 import { oriChatRoute, oriApprovalRoute, oriSessionListRoute, oriSessionGetRoute } from './routes/ori-routes';
+import {
+  oriMemoryCandidateDecisionRoute,
+  oriMemoryCandidateListRoute,
+  oriMemoryDeleteRoute,
+  oriMemoryGetRoute,
+  oriMemoryUpdateRoute,
+  oriTenantRuleCreateRoute,
+  oriTenantRuleDeleteRoute,
+  oriTenantRuleUpdateRoute,
+} from './routes/ori-memory-routes';
 import { skillListRoute, skillCreateRoute, skillUpdateRoute } from './routes/skill-routes';
 import { voucherTypeListRoute, voucherTypeCreateRoute, voucherTypeUpdateRoute } from './routes/voucher-type-routes';
 import {
@@ -73,6 +84,7 @@ export const mastra = new Mastra({
     dailyScheduleAgent,
     scheduleSuggestionAgent,
     oriAgent,
+    oriMemoryLearnerAgent,
   },
   server: {
     // As rotas de travel_agent/* usam o access_token do Supabase Auth do usuário (requiresAuth:
@@ -93,6 +105,14 @@ export const mastra = new Mastra({
       oriApprovalRoute,
       oriSessionListRoute,
       oriSessionGetRoute,
+      oriMemoryGetRoute,
+      oriMemoryUpdateRoute,
+      oriMemoryDeleteRoute,
+      oriTenantRuleCreateRoute,
+      oriTenantRuleUpdateRoute,
+      oriTenantRuleDeleteRoute,
+      oriMemoryCandidateListRoute,
+      oriMemoryCandidateDecisionRoute,
       skillListRoute,
       skillCreateRoute,
       skillUpdateRoute,

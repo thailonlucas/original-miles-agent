@@ -27,6 +27,9 @@ import { updateSuggestionTool } from './tools/update-suggestion-tool';
 import { removeSuggestionTool } from './tools/remove-suggestion-tool';
 import { rejectChatSuggestionTool } from './tools/reject-chat-suggestion-tool';
 import { noteTravelContextTool } from './tools/note-travel-context-tool';
+import { noteUserPreferenceTool } from './tools/note-user-preference-tool';
+import { forgetUserPreferenceTool } from './tools/forget-user-preference-tool';
+import { getTenantRules, getUserMemory } from '../../services/ori-memory-db';
 
 // Memória de conversa por sessão (thread) — sem ela, a confirmação pedida antes de criar um
 // voucher ("quer que eu adicione isso?", ver `tools/create-voucher-tool.ts`) não funcionaria: a
@@ -95,6 +98,8 @@ export const oriAgent = new Agent({
     rejeitarSugestaoDoChat: rejectChatSuggestionTool,
     decidirSugestao: decideSuggestionTool,
     adicionarSugestaoAoDiaADia: addSuggestionToScheduleTool,
+    anotarPreferenciaConsultor: noteUserPreferenceTool,
+    esquecerPreferencia: forgetUserPreferenceTool,
   },
   memory: oriMemory,
   defaultOptions: {
@@ -208,15 +213,17 @@ async function finalizeOriOutput(
 // acidental do mesmo `session_id` em outra viagem nunca colidir com uma thread já existente de
 // outro dono (thread não pode trocar de "owner"/resource depois de criada).
 export async function askOri(tenantId: string, travelId: string, userId: string, sessionId: string, prompt: string): Promise<OriResponse> {
-  const [vouchers, tripContext, schedule] = await Promise.all([
+  const [vouchers, tripContext, schedule, tenantRules, userItems] = await Promise.all([
     getVoucherSummaries(tenantId, travelId),
     getTravelSummary(tenantId, travelId),
     getTravelSchedule(tenantId, travelId),
+    getTenantRules(tenantId),
+    getUserMemory(tenantId, userId),
   ]);
   const parsedSchedule = dailyScheduleSchema.safeParse(schedule.dailySchedule);
 
   const output = await oriAgent.generate(prompt, {
-    instructions: buildOriInstructions(vouchers, tripContext, parsedSchedule.success ? parsedSchedule.data : []),
+    instructions: buildOriInstructions(vouchers, tripContext, parsedSchedule.success ? parsedSchedule.data : [], { tenantRules, userItems }),
     memory: {
       thread: `${travelId}:${sessionId}`,
       resource: tenantId,
@@ -225,6 +232,8 @@ export async function askOri(tenantId: string, travelId: string, userId: string,
       ['tenant_id', tenantId],
       ['travel_id', travelId],
       ['user_id', userId],
+      // Evidência das preferências anotadas nesta conversa (`anotarPreferenciaConsultor`).
+      ['session_id', sessionId],
     ]),
   });
 

@@ -189,6 +189,16 @@ sugerido). O Ori só pergunta o horário se faltar — antes pedia local/traje/q
 "**Ocasião:** Casamento / **Local:** Lago Maggiore" num evento "Casamento no Lago Maggiore".
 `normalizeEventContent` ainda tira, na gravação, linhas cujo valor só repete o título.
 
+## Memória do consultor e do tenant
+
+O Ori lembra, entre sessões e viagens, como cada consultor gosta de trabalhar — ver
+`agents/ori-memory-learner/AGENTS.md` pras camadas e regras. `askOri` carrega as regras do tenant e a
+memória do usuário logado (`services/ori-memory-db.ts`) e `buildOriInstructions` injeta as seções
+"Regras desta agência" e "Como este consultor trabalha" (só itens ativos, com id). Tools:
+`anotarPreferenciaConsultor` (pedido explícito, sem confirmação; `session_id` do `requestContext` vira
+evidência) e `esquecerPreferencia` (pelo id). Preferência é sobre o CONSULTOR; o que é sobre o
+cliente continua no Contexto da Viagem. Rotas em `routes/ori-memory-routes.ts`.
+
 ## Conversa x ação
 
 O prompt ("## Como conversar") separa três tipos de escrita:

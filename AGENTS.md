@@ -30,6 +30,7 @@ Follow this same layout when adding a new agent. Read the agent's own `AGENTS.md
 - `luna` — agente principal, responde o cliente via WhatsApp com base na F.A.Q. da empresa.
 - `original-miles-guardrail` — roda depois da Luna em toda resposta; decide se ela pode ir pro cliente final ou se deve transferir pra um humano.
 - `trending` — observa as mensagens da conversa e popula uma base de conhecimento para o time acompanhar erros e desejos dos clientes em tempo real.
+- `ori-memory-learner` — observa as conversas com o Ori e aprende como cada consultor trabalha (memória por usuário + candidatas a regra do tenant).
 - `tags` — vários agentes que observam a conversa e adicionam tags para ajudar na tabulação do ticket no Zendesk.
 
 Only `luna` exists so far; the others are built one at a time as their prompts are provided.

@@ -14,6 +14,7 @@ import {
 } from '../services/travel-db';
 import { extractBearerToken, verifySupabaseAccessToken, UnauthorizedError } from '../services/supabase-auth';
 import { logConversationError } from '../helpers/logger';
+import { triggerOriMemoryLearning } from '../agents/ori-memory-learner/ori-memory-learner-trigger';
 import { parseOrBadRequest } from './validate';
 
 // Mesmo contrato de autenticação das outras rotas de travel_agent (ver `voucher-routes.ts` /
@@ -118,6 +119,8 @@ export const oriChatRoute = registerApiRoute('/travel_agent/ori', {
         [{ id: randomUUID(), role: 'user', content: prompt, created_at: now }, assistantHistoryMessage(result)],
         prompt,
       ).catch((error) => logConversationError(travelId, `Ori: falha ao gravar histórico (session_id ${sessionId})`, error));
+      // Depois do histórico gravado: o learner lê a sessão de `ori_chat_session`.
+      triggerOriMemoryLearning(tenantId, travelId, userId, sessionId);
       return c.json(result, 200);
     } catch (error) {
       logConversationError(travelId, `Ori: falha ao gerar resposta (session_id ${sessionId})`, error);
