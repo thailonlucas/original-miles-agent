@@ -217,8 +217,16 @@ export async function askOri(tenantId: string, travelId: string, userId: string,
     getVoucherSummaries(tenantId, travelId),
     getTravelSummary(tenantId, travelId),
     getTravelSchedule(tenantId, travelId),
-    getTenantRules(tenantId),
-    getUserMemory(tenantId, userId),
+    // Memória é complemento: uma falha ao ler (ex: tabela ainda não criada) não pode derrubar a
+    // conversa — o Ori responde sem ela.
+    getTenantRules(tenantId).catch((error) => {
+      console.error(`[memória do Ori] falha ao ler regras do tenant ${tenantId}`, error);
+      return [];
+    }),
+    getUserMemory(tenantId, userId).catch((error) => {
+      console.error(`[memória do Ori] falha ao ler memória do usuário ${userId}`, error);
+      return [];
+    }),
   ]);
   const parsedSchedule = dailyScheduleSchema.safeParse(schedule.dailySchedule);
 
