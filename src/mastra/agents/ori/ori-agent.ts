@@ -33,6 +33,7 @@ import { correctTravelMemoryTool } from './tools/correct-travel-memory-tool';
 import { noteUserPreferenceTool } from './tools/note-user-preference-tool';
 import { forgetUserPreferenceTool } from './tools/forget-user-preference-tool';
 import { internetSearchTool } from './tools/web-search-tool';
+import { searchClientTool } from './tools/search-client-tool';
 import { getTenantRules, getUserMemory } from '../../services/ori-memory-db';
 
 // Memória de conversa por sessão (thread) — sem ela, a confirmação pedida antes de criar um
@@ -109,6 +110,7 @@ export const oriAgent = new Agent({
     anotarPreferenciaConsultor: noteUserPreferenceTool,
     esquecerPreferencia: forgetUserPreferenceTool,
     pesquisarNaInternet: internetSearchTool,
+    buscarCliente: searchClientTool,
   },
   memory: oriMemory,
   defaultOptions: {

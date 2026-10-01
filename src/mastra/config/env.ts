@@ -13,6 +13,10 @@ const envSchema = z.object({
   // exceto o webhook do Zendesk (que não manda esse header).
   ORIGINAL_MILES_API_KEY: z.string().min(1, 'ORIGINAL_MILES_API_KEY is required'),
   OPENAI_EMBEDDING_MODEL: optionalString(),
+  // Chave (header X-API-Key) da API da plataforma Original Miles, usada pela tool `buscarCliente` do
+  // Ori — ver `services/original-miles-platform.ts`. A URL tem default (app.originalmiles.net/api/v1).
+  ORIGINAL_MILES_PLATFORM_API_KEY: optionalString(),
+  ORIGINAL_MILES_PLATFORM_API_URL: optionalUrl(),
   GOOGLE_GENERATIVE_AI_API_KEY: optionalString(),
 
   SUPABASE_URL: optionalUrl(),

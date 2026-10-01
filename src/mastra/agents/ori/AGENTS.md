@@ -68,7 +68,7 @@ o que fazer com isso — hoje provavelmente um botão/gatilho de "atualizar" que
 relevante (`GET /travel_agent/daily-schedule`, lista de vouchers, `travel-summary`, sugestões etc.),
 não uma mudança automática de UI aqui no backend.
 
-## As 21 tools — todas escopadas por `requestContext`
+## As tools — todas escopadas por `requestContext`
 
 `tenant_id`/`travel_id`/`user_id` vêm sempre do `requestContext` (nunca de argumento que o model
 preenche, mesmo contrato de `agents/daily-schedule/tools/open-voucher-tool.ts`) — evita um voucher
@@ -198,6 +198,16 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   - **`removerSugestao`** (`tools/remove-suggestion-tool.ts`) — `removeSuggestion` (rota `DELETE
     /travel_agent/schedule-suggestion/decision`, o botão de apagar do histórico): apaga de vez e, se
     ela já estava aprovada, tira o evento dela do dia a dia na mesma transação (antes ficava órfão).
+
+- **`buscarCliente`** (`tools/search-client-tool.ts`) — só leitura, sem confirmação. Busca o
+  cliente na API da plataforma Original Miles (`GET https://app.originalmiles.net/api/v1/clientes`,
+  client em `services/original-miles-platform.ts`) por `id`/`email`/`cpf` (prioridade da API:
+  id > email > cpf) e devolve as seções de `fields` (`dados_cadastrais`, `hospedagens`,
+  `destinos_visitados`, `itinerarios_realizados`, `resumo_financeiro`; sem `fields` vem só o
+  cadastro). Os argumentos de busca vêm do model (o consultor informa), diferente das outras tools —
+  o isolamento aqui é da própria API: a chave `ORIGINAL_MILES_PLATFORM_API_KEY` (header `X-API-Key`)
+  é vinculada a uma empresa e só enxerga os clientes dela. Erro 400 (`MISSING_SEARCH_PARAM`,
+  `INVALID_FIELD`) volta pro model; 401/rede sobe como erro.
 
 ## Detalhe dos cards
 
@@ -340,8 +350,8 @@ não dependem disso — a pausa delas é resolvida pelo snapshot do próprio Mas
 
 ## Arquivos desta pasta
 
-- `ori-agent.ts` — `Agent` (`memory`, as 21 tools, `structuredOutput: oriResultSchema`) + `askOri`,
+- `ori-agent.ts` — `Agent` (`memory`, as tools, `structuredOutput: oriResultSchema`) + `askOri`,
   chamado pela rota.
 - `schema.ts` — `oriResultSchema`.
 - `prompts/system-prompt.ts` — `buildOriInstructions` (texto fixo do prompt + lista de vouchers).
-- `tools/` — as 21 tools.
+- `tools/` — as tools.
