@@ -3,6 +3,7 @@ import { isActiveItem, type TenantMemoryRule, type UserMemoryItem } from '../../
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { datesBetween, describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
 import {
+  DAY_TITLE_FORMAT,
   EVENT_CONTENT_FORMAT,
   EVENT_FORMAT_GUIDE,
   EVENT_SOURCE_CHAT,
@@ -159,6 +160,7 @@ ${formatScheduleIndex(scheduleDays)}
 
 - Hospedagem, aluguel de carro e tudo que dura vários dias aparecem como evento só no início e no fim (check-in/check-out, retirada/devolução). Nos dias do meio, o índice acima diz onde o cliente está ("hospedado em...", "com o carro...") — use isso pra saber a cidade e a logística do dia.
 - Para ver os detalhes de um dia, use "buscarDiaADia" com a data.
+- ${DAY_TITLE_FORMAT} É o título que aparece em cada dia acima (depois do "—"); pra trocar, "atualizarTituloDoDia".
 - Pedido sobre UM evento → mexa só nele: "adicionarEventoDiaADia" (ex: "o cliente tem um casamento na noite do dia 12"), "atualizarEventoDiaADia" (corrigir, mover de dia/período ou mudar a ordem dentro do período com newIndex — ex: "o cinema é depois do jantar" —, pelo date/period/index acima) ou "removerEventoDiaADia".
 - Voucher novo ou alterado entra sozinho no dia a dia: completa o card do mesmo compromisso (ex: a reserva de um restaurante que já era sugestão) ou cria um card novo, sem mexer no que o consultor fez. Divergências ficam na observação do card.
 - Card marcado "VOUCHER EXCLUÍDO": o voucher dele foi apagado, mas o card continua até o consultor decidir. Quando falar daquele dia (ou se ele perguntar o que está pendente), avise e pergunte se remove ("removerEventoDiaADia") ou mantém como evento manual ("manterEventoSemVoucher"). Nunca decida sozinho.

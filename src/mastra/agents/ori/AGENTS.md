@@ -118,6 +118,12 @@ de outro tenant/viagem vazar ou ser editado por um id adivinhado/errado.
   - **`removerEventoDiaADia`** (`tools/remove-daily-schedule-event-tool.ts`) —
     `removeDailyScheduleEvent` (rota `DELETE`).
 
+  - **`atualizarTituloDoDia`** (`tools/update-day-titles-tool.ts`) — `updateDailyScheduleDayTitle`
+    (rota `PATCH /travel_agent/daily-schedule/day`), um ou vários dias por chamada: o título do DIA,
+    no formato `DAY_TITLE_FORMAT` ("Cidade | descrição", também no prompt do Ori, seção do dia a dia).
+    Fica marcado como editado (`title_edited`), igual à edição pela tela — nenhum voucher troca depois.
+    O cartão lista os títulos novos. Antes o Ori não tinha como mudar o título de um dia e, sem a regra
+    no prompt, inventava um padrão.
   - **`manterEventoSemVoucher`** (`tools/keep-daily-schedule-event-tool.ts`) — `keepDailyScheduleEvent`
     (rota `POST /travel_agent/daily-schedule/event/keep`): decisão "manter" de um card marcado como
     voucher excluído (a decisão "remover" é `removerEventoDiaADia`). O índice do prompt mostra esses

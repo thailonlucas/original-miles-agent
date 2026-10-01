@@ -23,6 +23,7 @@ import { generateDailyScheduleTool } from './tools/generate-daily-schedule-tool'
 import { addDailyScheduleEventTool } from './tools/add-daily-schedule-event-tool';
 import { removeDailyScheduleEventTool } from './tools/remove-daily-schedule-event-tool';
 import { keepDailyScheduleEventTool } from './tools/keep-daily-schedule-event-tool';
+import { updateDayTitlesTool } from './tools/update-day-titles-tool';
 import { createSuggestionTool } from './tools/create-suggestion-tool';
 import { updateSuggestionTool } from './tools/update-suggestion-tool';
 import { removeSuggestionTool } from './tools/remove-suggestion-tool';
@@ -62,6 +63,7 @@ const WRITE_TOOL_IDS = new Set<string>([
   addDailyScheduleEventTool.id,
   removeDailyScheduleEventTool.id,
   keepDailyScheduleEventTool.id,
+  updateDayTitlesTool.id,
   createSuggestionTool.id,
   updateSuggestionTool.id,
   removeSuggestionTool.id,
@@ -91,6 +93,7 @@ export const oriAgent = new Agent({
     atualizarEventoDiaADia: updateDailyScheduleEventTool,
     removerEventoDiaADia: removeDailyScheduleEventTool,
     manterEventoSemVoucher: keepDailyScheduleEventTool,
+    atualizarTituloDoDia: updateDayTitlesTool,
     buscarContextoViagem: getTravelContextTool,
     anotarSobreViagem: noteTravelMemoryTool,
     corrigirAnotacaoViagem: correctTravelMemoryTool,
@@ -191,6 +194,11 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
   }
   if (toolName === addDailyScheduleEventTool.id) {
     return `Confirma que quer adicionar "${args.title}" ao dia a dia (${describeSlot(args.date, args.period)})?`;
+  }
+  if (toolName === updateDayTitlesTool.id) {
+    const days = Array.isArray(args.days) ? (args.days as { date?: unknown; title?: unknown }[]) : [];
+    const lines = days.map((d) => `• ${d.date}: ${d.title}`);
+    return [`Confirma os novos títulos ${days.length === 1 ? 'do dia' : 'dos dias'}?`, '', ...lines].join('\n');
   }
   if (toolName === keepDailyScheduleEventTool.id) {
     const event =
