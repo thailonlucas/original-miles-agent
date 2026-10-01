@@ -1,3 +1,4 @@
+import { getCardPreferences } from '../../services/ori-memory-db';
 import {
   appendPendingSuggestions,
   getSuggestions,
@@ -34,6 +35,7 @@ async function runValidationAndRepair(
   prompt: string | null,
   summary: string | null,
   initial: ScheduleSuggestionResult,
+  cardPreferences: string[],
 ): Promise<ScheduleSuggestionResult> {
   let current = initial;
 
@@ -78,6 +80,7 @@ async function runValidationAndRepair(
           summary,
           keep,
           replace,
+          cardPreferences,
         );
         next[period] = { has_existing_events: current[period].has_existing_events, suggestions: [...keep, ...regenerated] };
       }
@@ -115,13 +118,15 @@ export async function suggestDayActivities(
   prompt: string | null = null,
   quantity = 3,
 ): Promise<ScheduleSuggestionResultWithIds> {
-  const [scheduleState, vouchers, allSuggestions, summary] = await Promise.all([
+  const [scheduleState, vouchers, allSuggestions, summary, cardPreferences] = await Promise.all([
     getTravelSchedule(tenantId, travelId),
     getVoucherSummaries(tenantId, travelId),
     getSuggestions(tenantId, travelId),
     // Contexto da Viagem do consultor + o que a equipe contou ao Ori (`getTravelClientContext`) —
     // complementa (ou, na ausência de `prompt`, substitui) o padrão "high ticket" fixo do prompt.
     getTravelClientContext(tenantId, travelId),
+    // O formato de card que quem pediu as sugestões quer (vale acima do padrão).
+    getCardPreferences(tenantId, userId),
   ]);
 
   // "Inteligência" da viagem pro prompt: só sugestões já DECIDIDAS (aprovadas/rejeitadas) carregam
@@ -146,13 +151,25 @@ export async function suggestDayActivities(
     prompt,
     quantity,
     summary,
+    cardPreferences,
   );
 
   // Post-processor: nunca persiste o que sai direto do gerador sem passar pelo validador (ver
   // `runValidationAndRepair`) — garante que sugestões óbvias demais (repetidas do histórico,
   // fora do nível esperado, violando restrição do cliente etc.) sejam corrigidas ou descartadas
   // antes de chegar ao cliente.
-  const result = await runValidationAndRepair(day, existingDay, fullSchedule, relevantVouchers, decisionHistory, tenantId, prompt, summary, generated);
+  const result = await runValidationAndRepair(
+    day,
+    existingDay,
+    fullSchedule,
+    relevantVouchers,
+    decisionHistory,
+    tenantId,
+    prompt,
+    summary,
+    generated,
+    cardPreferences,
+  );
 
   const now = new Date().toISOString();
   const withIds: ScheduleSuggestionResultWithIds = {

@@ -72,7 +72,8 @@ export const LEARNED_MIN_SESSIONS = 2;
 // Tetos pra memória caber inteira no prompt de toda chamada.
 export const MAX_USER_ITEMS = 15;
 export const MAX_TENANT_RULES = 20;
-export const MAX_MEMORY_TEXT = 200;
+// Folgado pra caber um modelo de card inteiro que o consultor colou ("TAP Air Portugal • TP 0824 ...").
+export const MAX_MEMORY_TEXT = 1000;
 
 export const itemHits = (item: UserMemoryItem): number => item.evidence.length;
 
@@ -158,6 +159,19 @@ export async function mutateUserMemory<T>(
     throw error;
   } finally {
     client.release();
+  }
+}
+
+// O formato de card que ESTE consultor pediu (itens ativos, kind "cards") — vai pros prompts de todo
+// caminho que escreve card (`formatCardPreferences`, `daily-schedule/event-format.ts`). Memória é
+// complemento: falha ao ler não derruba a geração, só cai no formato padrão.
+export async function getCardPreferences(tenantId: string, userId: string): Promise<string[]> {
+  try {
+    const items = await getUserMemory(tenantId, userId);
+    return items.filter((i) => i.kind === 'cards' && isActiveItem(i)).map((i) => i.text);
+  } catch (error) {
+    console.error(`[memória do Ori] falha ao ler preferências de card do usuário ${userId}`, error);
+    return [];
   }
 }
 

@@ -11,11 +11,13 @@ Também propõe candidatas a regra da agência ou a ajuste do prompt base (`ori_
 
 ## Camadas da memória (prioridade de cima pra baixo)
 
-1. Prompt base (código) — todos os tenants. Nenhuma memória libera confirmação, dado fora do
-   voucher/chat ou muda o formato dos eventos do dia a dia.
-2. Regras obrigatórias do tenant (`ori_tenant_memory`, `required: true`) — só admin altera.
-3. Preferências do consultor (`ori_user_memory`).
-4. Regras não obrigatórias do tenant — o padrão da agência, que o consultor pode ajustar.
+1. Regras obrigatórias do tenant (`ori_tenant_memory`, `required: true`) — só admin altera.
+2. Preferências do consultor (`ori_user_memory`) — o que ele pede é lei acima de tudo abaixo. O kind
+   "cards" entra também nos prompts dos geradores de card (`getCardPreferences`).
+3. Regras não obrigatórias do tenant — o padrão da agência, que o consultor pode ajustar.
+4. Prompt base (código) — todos os tenants. É só o ponto de partida: tom, fluxo e formato dos cards
+   são padrões que as camadas de cima mudam. O Ori nunca recusa um pedido do consultor dizendo que
+   "as regras não permitem".
 
 Tabelas em `sql/ori_memory.sql`; acesso em `services/ori-memory-db.ts`.
 

@@ -7,6 +7,7 @@ import {
   withTravelScheduleLock,
   type VoucherSummary,
 } from '../../services/travel-db';
+import { getCardPreferences } from '../../services/ori-memory-db';
 import { buildVoucherOperations, buildVoucherSchedule } from './daily-schedule-agent';
 import { applyVoucherOperations, keepEditedTitles, keptEventsOnly, markVoucherRemoved, mergeDays, scheduleRange } from './schedule-merge';
 import { dailyScheduleSchema, type DailyScheduleDay } from './schema';
@@ -36,17 +37,21 @@ export async function saveScheduleDays(tenantId: string, travelId: string, days:
 // assim como os títulos de dia editados. Os cards mantidos vão pra LLM como contexto: um deles pode
 // já cobrir um compromisso de voucher (a sugestão do restaurante enriquecida pela reserva), e aí ela
 // não cria outro.
+// `userId`: quem pediu pra refazer — os cards novos seguem o formato que ele pediu (`getCardPreferences`).
 export async function rebuildVoucherEvents(
   tenantId: string,
   travelId: string,
+  userId: string,
   currentDays: DailyScheduleDay[],
   client: pg.PoolClient,
 ): Promise<{ days: DailyScheduleDay[]; openedVoucherIds: string[] }> {
   const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
   const summary = await getTravelClientContext(tenantId, travelId, client);
   const kept = keptEventsOnly(currentDays);
+  const cardPreferences = await getCardPreferences(tenantId, userId);
 
-  const fromVouchers = vouchers.length > 0 ? await buildVoucherSchedule(vouchers, kept, tenantId, summary) : { days: [], openedVoucherIds: [] };
+  const fromVouchers =
+    vouchers.length > 0 ? await buildVoucherSchedule(vouchers, kept, tenantId, summary, cardPreferences) : { days: [], openedVoucherIds: [] };
 
   const days = keepEditedTitles(currentDays, mergeDays(fromVouchers.days, kept, 'base'));
   return { days, openedVoucherIds: fromVouchers.openedVoucherIds };
@@ -62,9 +67,11 @@ export async function updateDailyScheduleForVoucher(tenantId: string, travelId: 
     const currentDays = await readScheduleDays(tenantId, travelId, client);
     const vouchers = (await getVoucherSummaries(tenantId, travelId, client)).filter(isRelevant);
     const summary = await getTravelClientContext(tenantId, travelId, client);
-    const operations = await buildVoucherOperations(voucher.id, currentDays, vouchers, tenantId, summary);
+    // Quem subiu/alterou o voucher: o card novo segue o formato que ele pediu.
+    const cardPreferences = await getCardPreferences(tenantId, userId);
+    const { operations, dayTitles } = await buildVoucherOperations(voucher.id, currentDays, vouchers, tenantId, summary, cardPreferences);
 
-    const { days, skipped } = applyVoucherOperations(currentDays, voucher.id, operations);
+    const { days, skipped } = applyVoucherOperations(currentDays, voucher.id, operations, dayTitles);
     if (skipped.length > 0) {
       console.error(`[dia a dia] voucher ${voucher.id} (viagem ${travelId}): ${skipped.length} operação(ões) ignorada(s)`, JSON.stringify(skipped));
     }

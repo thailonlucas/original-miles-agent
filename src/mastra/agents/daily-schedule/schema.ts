@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_CONTENT_FORMAT, EVENT_SOURCE_VOUCHER, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from './event-format';
+import { DAY_TITLE_FORMAT, EVENT_CONTENT_FORMAT, EVENT_SOURCE_VOUCHER, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from './event-format';
 
 // De onde veio (quem criou) um evento do dia a dia. Voucher novo/atualizado nunca recria nem
 // substitui um card — só enriquece o que já existe ou cria um card novo (ver AGENTS.md desta pasta);
@@ -44,7 +44,7 @@ export const dailyScheduleEventSchema = z.object({
 
 export const dailyScheduleDaySchema = z.object({
   date: z.string().describe('YYYY-MM-DD'),
-  title: z.string().describe('Frase curta resumindo o evento mais relevante deste dia.'),
+  title: z.string().describe(DAY_TITLE_FORMAT),
   // `true` quando o consultor editou o título do dia à mão (`updateDailyScheduleDayTitle`, kanban do
   // front) — daí em diante nenhuma junção/reconstrução troca esse título (`schedule-merge.ts`). Só no
   // formato gravado; a LLM nunca vê nem devolve.
@@ -90,7 +90,7 @@ const llmDateSchema = z
 
 const voucherDaySchema = z.object({
   date: llmDateSchema,
-  title: z.string().describe('Frase curta resumindo o evento mais relevante deste dia.'),
+  title: z.string().describe(DAY_TITLE_FORMAT),
   events: z.object({
     morning: z.array(voucherEventSchema).describe('Eventos entre 00:00 e 11:59.'),
     afternoon: z.array(voucherEventSchema).describe('Eventos entre 12:00 e 17:59.'),
@@ -139,6 +139,11 @@ const voucherOperationSchema = z.object({
 
 export const voucherOperationsResultSchema = z.object({
   operations: z.array(voucherOperationSchema).describe('Uma operação por compromisso do voucher. Vazio se o voucher não gerar evento.'),
+  day_titles: z
+    .array(z.object({ date: llmDateSchema, title: z.string().describe(DAY_TITLE_FORMAT) }))
+    .describe(
+      'Título de cada dia em que você criou um card (inclusive dia novo), considerando TODOS os cards do dia depois das operações. Não inclua dias que você não tocou. O código não troca título editado pelo consultor.',
+    ),
 });
 
 export type DailyScheduleEventSource = z.infer<typeof dailyScheduleEventSourceSchema>;

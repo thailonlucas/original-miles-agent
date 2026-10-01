@@ -46,9 +46,10 @@ export async function buildVoucherSchedule(
   keptDays: DailyScheduleDay[],
   tenantId: string,
   summary: string | null,
+  cardPreferences: string[],
 ): Promise<{ days: DailyScheduleDay[]; openedVoucherIds: string[] }> {
   const { object, toolCalls } = await dailyScheduleAgent.generate(buildFromScratchUserMessage(vouchers, keptDays, summary), {
-    instructions: buildFromScratchInstructions(),
+    instructions: buildFromScratchInstructions(cardPreferences),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
   });
   return { days: toStoredDays(object.days), openedVoucherIds: openedVoucherIds(toolCalls) };
@@ -62,11 +63,12 @@ export async function buildVoucherOperations(
   vouchers: VoucherSummary[],
   tenantId: string,
   summary: string | null,
-): Promise<VoucherOperation[]> {
+  cardPreferences: string[],
+): Promise<{ operations: VoucherOperation[]; dayTitles: { date: string; title: string }[] }> {
   const { object } = await dailyScheduleAgent.generate(buildVoucherOperationsUserMessage(currentDays, vouchers, voucherId, summary), {
-    instructions: buildVoucherOperationsInstructions(),
+    instructions: buildVoucherOperationsInstructions(cardPreferences),
     requestContext: new RequestContext([['tenant_id', tenantId]]),
     structuredOutput: { schema: voucherOperationsResultSchema },
   });
-  return object.operations;
+  return { operations: object.operations, dayTitles: object.day_titles };
 }

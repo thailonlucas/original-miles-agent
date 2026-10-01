@@ -1,7 +1,15 @@
 import type { VoucherSummary } from '../../../services/travel-db';
 import type { DailyScheduleDay, DailyScheduleEvent } from '../schema';
 import { eventVoucherIds } from '../schedule-merge';
-import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_VOUCHER, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../event-format';
+import {
+  DAY_TITLE_FORMAT,
+  EVENT_CONTENT_FORMAT,
+  EVENT_FORMAT_GUIDE,
+  EVENT_SOURCE_VOUCHER,
+  EVENT_TITLE_FORMAT,
+  EVENT_TYPE_FORMAT,
+  formatCardPreferences,
+} from '../event-format';
 
 const COMMON_RULES = `## Regras por tipo de voucher
 
@@ -29,6 +37,7 @@ ${EVENT_SOURCE_VOUCHER}
 - Período pelo horário local do voucher: morning = 00:00–11:59, afternoon = 12:00–17:59, night = 18:00–23:59. Sem horário, use o bom senso pelo tipo (check-out de manhã, jantar à noite) — mas nunca invente um horário no "content" (sem horário no voucher, "a confirmar").
 - Se dois vouchers tocarem o mesmo acontecimento (confirmando ou contradizendo um dado), preencha "observation" citando de qual voucher vem cada informação. Caso contrário, null.
 - Devolva só os dias que têm pelo menos um evento, em ordem cronológica.
+- ${DAY_TITLE_FORMAT}
 - Um "Resumo geral da viagem" (se houver) é só contexto do perfil do cliente — nunca cria evento.
 
 ## Voos de madrugada e voos que chegam em outro dia
@@ -77,6 +86,7 @@ function formatScheduleCards(days: DailyScheduleDay[], voucherId: string): strin
   return JSON.stringify(
     days.map((day) => ({
       date: day.date,
+      title: day.title,
       morning: day.events.morning.map(card),
       afternoon: day.events.afternoon.map(card),
       night: day.events.night.map(card),
@@ -89,7 +99,8 @@ function formatScheduleCards(days: DailyScheduleDay[], voucherId: string): strin
 // Do zero ("refazer o dia a dia"): todos os eventos de voucher. Os cards que não vieram de voucher
 // (sugestões aprovadas, chat, à mão) ficam — o código junta depois (`rebuildVoucherEvents`) — e vão
 // aqui como contexto, pra não criar de novo um compromisso que um deles já cobre.
-export function buildFromScratchInstructions(): string {
+// `cardPreferences` (nos dois modos): o formato de card que o consultor pediu — vale acima do padrão.
+export function buildFromScratchInstructions(cardPreferences: string[] = []): string {
   return `Você monta os eventos do dia a dia de uma viagem a partir dos vouchers já extraídos dela.
 
 ## O que fazer
@@ -98,7 +109,9 @@ export function buildFromScratchInstructions(): string {
 2. Monte um item por dia que tiver pelo menos um evento, em ordem cronológica.
 3. Os "cards que ficam" (lista na mensagem) continuam no dia a dia sem passar por você. Se um deles já é o compromisso de um voucher (ex: a sugestão "Almoço no Nobu" e a reserva do Nobu, na mesma data), NÃO gere evento pra esse compromisso — ele já tem card. Os outros eventos do mesmo voucher (ex: o check-out, se o card que fica é o check-in) você gera normalmente.
 
-${COMMON_RULES}`;
+${COMMON_RULES}
+
+${formatCardPreferences(cardPreferences)}`;
 }
 
 export function buildFromScratchUserMessage(vouchers: VoucherSummary[], keptDays: DailyScheduleDay[], summary: string | null): string {
@@ -116,21 +129,25 @@ Monte os eventos do dia a dia desta viagem.`;
 // Um voucher só (criado ou atualizado): encaixa no dia a dia que já existe. Nunca recria nem
 // substitui um card — enriquece o card do mesmo compromisso ou cria um novo. O código aplica
 // (`applyVoucherOperations`, `schedule-merge.ts`).
-export function buildVoucherOperationsInstructions(): string {
+export function buildVoucherOperationsInstructions(cardPreferences: string[] = []): string {
   return `Você encaixa UM voucher de uma viagem no dia a dia que o consultor já montou. O dia a dia pode ter horas de trabalho do consultor e é a base de referência: você nunca apaga, move nem escreve um card do zero — atualiza o card que já existe a partir do texto dele, ou cria um novo.
 
 ## O que fazer
 
 1. Abra com "openVoucher" o voucher indicado. Se precisar comparar com um card que veio de outro voucher, pode abrir esse outro também.
 2. Para cada compromisso do voucher (cada evento que ele geraria pelas regras abaixo), procure no dia a dia atual um card do MESMO compromisso, de qualquer origem — sugestão aprovada, chat, à mão ou outro voucher. Ex: a sugestão "Almoço no Nobu" e depois a reserva do Nobu; o passeio combinado no chat e depois o ingresso; o voo lançado à mão e depois o bilhete.
-   - Mesmo compromisso NA MESMA DATA → "enrich" com date/period/index desse card. Em "content", devolva o texto ATUAL do card atualizado: mantenha tudo que o consultor escreveu (preferências, dicas, pedidos do cliente, a ordem e o jeito dele), troque o que o voucher comprova diferente ou que estava pendente ("Horário a confirmar" → "**Check-in:** 16h") e acrescente o que o voucher traz de novo (confirmação, localizador). Nunca apague uma informação do consultor que o voucher não contradiz. Se o voucher mudou algo que o consultor tinha escrito (outro horário, outro local), registre em "observation" com o valor antigo (ex: "Horário atualizado pelo voucher Nobu: 20h → 13h"); o que só estava pendente ou é novo não precisa de observação. Título só muda se tiver um dado que o voucher contradiz. Nada muda → não devolva operação pra esse card.
+   - Mesmo compromisso NA MESMA DATA → "enrich" com date/period/index desse card. Em "content", devolva o texto ATUAL do card atualizado: mantenha tudo que o consultor escreveu (preferências, dicas, pedidos do cliente, a ordem e o jeito dele), troque o que o voucher comprova diferente ou que estava pendente ("Horário a confirmar" → "**Check-in:** 16h") e acrescente o que o voucher traz de novo (confirmação, localizador). Nunca apague uma informação do consultor que o voucher não contradiz. Se o voucher mudou algo que o consultor tinha escrito (outro horário, outro local), registre em "observation" com o valor antigo (ex: "Horário atualizado pelo voucher Nobu: 20h → 13h"); o que só estava pendente ou é novo não precisa de observação. Título só muda se tiver um dado que o voucher contradiz. Nada muda → não devolva operação nenhuma pra esse card (nunca um "enrich" com tudo null).
    - Parece o mesmo compromisso, mas em OUTRA DATA → não é o mesmo card. "create" do card novo na data do voucher, com "observation" apontando o card parecido (ex: "Pode ser o mesmo compromisso de 'Almoço no Nobu' (dia 12); o voucher indica o dia 13"), E um "enrich" só com "observation" no card parecido (ex: "O voucher Nobu indica o dia 13; foi criado um card lá"), com "content" null.
    - Não existe card desse compromisso → "create", com "index" na posição cronológica dentro do período (entre os cards que já existem), ou null pro fim.
    - Na dúvida se é o mesmo compromisso → "create" (um card a mais o consultor apaga; um card errado enriquecido ele pode nem perceber).
 3. Voucher atualizado: os cards com "deste_voucher": true já vieram dele. Compare com o voucher de novo e faça "enrich" só se algo mudou ou é novo, do mesmo jeito (texto atual como base, "observation" com o valor antigo, ex: "Horário atualizado pelo voucher: 13h → 14h"). Nunca crie de novo um compromisso que já tem card "deste_voucher".
 4. Se o voucher não gerar nenhum evento (ex: sem data), devolva "operations" vazio.
+5. Num "enrich", mantenha o formato que o card já tem (é o do consultor). Num "create", siga o formato que o consultor pediu, se houver (abaixo).
+6. Para cada dia em que você fez "create" (inclusive dia novo), devolva em "day_titles" o título do dia considerando todos os cards dele — no formato da regra "Título do dia" abaixo. Dias que você não tocou ficam fora.
 
-${COMMON_RULES}`;
+${COMMON_RULES}
+
+${formatCardPreferences(cardPreferences)}`;
 }
 
 export function buildVoucherOperationsUserMessage(

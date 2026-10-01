@@ -6,16 +6,19 @@ import { researchWeb } from '../../web-research/web-research-agent';
 // (`describePendingApproval`, `ori-agent.ts` → `WEB_SEARCH_APPROVAL_NOTICE`) explica os limites antes
 // dele decidir. Só depois do "sim" o `execute` chama o agente `web-research`, que é quem de fato busca
 // — ver `agents/web-research/AGENTS.md` pra por que a busca não fica direto no Ori. Só leitura: não
-// grava nada na viagem.
+// grava nada na viagem. Todo o "como pesquisar" mora aqui (description + `how_to_present`) — saiu do
+// prompt do Ori, onde ficava repetido: uma tool só, sempre visível pro model, não precisa de seção
+// nem de skill. Recusa: o motivo de `decideOriToolCall` já diz pra não chamar de novo.
 export const internetSearchTool = createTool({
   id: 'pesquisarNaInternet',
   requireApproval: true,
   description:
-    'Pesquisa na internet um fato atual que NÃO está nos vouchers, no Contexto da Viagem nem no dia a dia. Use só quando o consultor ' +
-    'pedir pesquisa ou perguntar diretamente um fato que muda com o tempo (horário de funcionamento, se abre em tal dia, evento numa ' +
-    'data, regra de entrada). NÃO use pra recomendar, comparar ou opinar — nem pra "confirmar" antes de recomendar: responda com o que ' +
-    'já sabe. O consultor aprova antes de a busca rodar. No "query", NUNCA coloque nome, ' +
-    'documento, contato ou qualquer dado do cliente — só o assunto (ex: "horário de funcionamento Cenacolo Vinciano Milão setembro 2026").',
+    'Pesquisa na internet um fato atual que NÃO está nos vouchers, no Contexto da Viagem nem no dia a dia. Use quando o consultor ' +
+    'pedir pesquisa ou quando a resposta depender de um fato que muda com o tempo e você não tem como saber (horário de funcionamento, ' +
+    'se abre em tal dia, se ainda existe, evento numa data, regra de entrada) — chame direto. ' +
+    'NÃO use pra recomendar, comparar ou opinar — nem pra "confirmar" antes de recomendar: ' +
+    'responda com o que já sabe. Nunca ofereça pesquisar no fim de uma resposta. No "query", NUNCA coloque nome, documento, contato ' +
+    'ou qualquer dado do cliente — só o assunto (ex: "horário de funcionamento Cenacolo Vinciano Milão setembro 2026").',
   inputSchema: z.object({
     query: z.string().min(3).max(200).describe('O que pesquisar, sem dado do cliente. Específico: lugar, cidade e data quando fizer diferença.'),
     url: z.string().url().optional().describe('Link pra ler, se o consultor mandou um.'),

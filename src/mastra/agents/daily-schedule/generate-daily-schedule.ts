@@ -16,7 +16,7 @@ export interface DailyScheduleGeneration {
 export async function generateDailySchedule(tenantId: string, travelId: string, userId: string): Promise<DailyScheduleGeneration> {
   return withTravelScheduleLock(tenantId, travelId, userId, async (client) => {
     const currentDays = await readScheduleDays(tenantId, travelId, client);
-    const { days, openedVoucherIds } = await rebuildVoucherEvents(tenantId, travelId, currentDays, client);
+    const { days, openedVoucherIds } = await rebuildVoucherEvents(tenantId, travelId, userId, currentDays, client);
     await saveScheduleDays(tenantId, travelId, days, client);
     return { days, response: JSON.stringify(days), analysedDocIds: openedVoucherIds };
   });

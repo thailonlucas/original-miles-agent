@@ -19,9 +19,8 @@ export const decideSuggestionTool = createTool({
   requireApproval: true,
   description:
     'Aprova ou rejeita uma sugestão de atividade já gerada, pelo `suggestionId` (de "buscarSugestoes"). Ao aprovar, a atividade é ' +
-    'inserida de verdade no dia a dia (`daily_schedule`) — mesmo sem nenhum voucher/reserva confirmando que ela vai acontecer. Esta ' +
-    'chamada pausa automaticamente esperando confirmação explícita do consultor antes de executar — não é preciso perguntar antes de ' +
-    'chamar, só chamar assim que a intenção estiver clara.',
+    'inserida de verdade no dia a dia (`daily_schedule`) — mesmo sem nenhum voucher/reserva confirmando que ela vai acontecer. Chame ' +
+    'assim que a intenção estiver clara.',
   inputSchema: z.object({
     suggestionId: z.string().describe('Id da sugestão a decidir, da lista de "buscarSugestoes".'),
     decision: z.enum(['approved', 'rejected']).describe('"approved" insere a atividade no dia a dia; "rejected" só registra a rejeição.'),

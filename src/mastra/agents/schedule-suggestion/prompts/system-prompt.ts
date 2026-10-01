@@ -2,7 +2,14 @@ import type { StoredSuggestion, VoucherSummary } from '../../../services/travel-
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
 import type { ScheduleSuggestionEvent, SchedulePeriod } from '../schema';
-import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT, EVENT_TYPE_FORMAT } from '../../daily-schedule/event-format';
+import {
+  EVENT_CONTENT_FORMAT,
+  EVENT_FORMAT_GUIDE,
+  EVENT_SOURCE_SUGGESTION,
+  EVENT_TITLE_FORMAT,
+  EVENT_TYPE_FORMAT,
+  formatCardPreferences,
+} from '../../daily-schedule/event-format';
 
 // Reaproveitados pelo prompt do validador (`prompts/validation-prompt.ts`) — mesmo contexto
 // (vouchers, outros dias, histórico de decisões) que o gerador já usa, pra avaliar as sugestões
@@ -55,7 +62,13 @@ export function formatDecisionHistory(decisionHistory: StoredSuggestion[]): stri
   );
 }
 
-export function buildSuggestionInstructions(quantity = 3, prompt: string | null = null, summary: string | null = null): string {
+// `cardPreferences`: o formato de card que o consultor pediu (memória dele) — vale acima do formato padrão.
+export function buildSuggestionInstructions(
+  quantity = 3,
+  prompt: string | null = null,
+  summary: string | null = null,
+  cardPreferences: string[] = [],
+): string {
   // Padrão "high ticket" fixo só vale quando o cliente não descreveu o que busca (nem no pedido
   // pontual deste dia, nem no resumo geral da viagem) — se houver qualquer um dos dois, ele é quem
   // define o nível/estilo da sugestão, não mais o perfil genérico da agência. O pedido pontual (se
@@ -97,6 +110,8 @@ ${profileSection}
 8.1. Como escrever o conteúdo de um evento:
 
 ${EVENT_FORMAT_GUIDE}
+
+${formatCardPreferences(cardPreferences)}
 9. "observation" segue a mesma regra dos eventos do roteiro: normalmente null; preencha só se a sugestão precisar registrar algum conflito/ressalva em relação a um evento já confirmado.`;
 }
 

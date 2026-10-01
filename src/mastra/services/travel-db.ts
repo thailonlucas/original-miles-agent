@@ -2,7 +2,7 @@ import pg from 'pg';
 import { env } from '../config/env';
 import { requireEnv } from '../config/require-env';
 import { dailyScheduleSchema, type DailyScheduleDay, type DailyScheduleEvent } from '../agents/daily-schedule/schema';
-import { addApprovedSuggestions, insertEventIntoDays, scheduleRange, withoutSuggestion } from '../agents/daily-schedule/schedule-merge';
+import { addApprovedSuggestions, fallbackDayTitle, insertEventIntoDays, scheduleRange, withoutSuggestion } from '../agents/daily-schedule/schedule-merge';
 import { normalizeEventContent } from '../agents/daily-schedule/event-format';
 
 // Acesso direto ao Postgres do Supabase (mesma connection string usada pelo storage do Mastra,
@@ -425,8 +425,7 @@ export async function updateDailyScheduleDayTitle(
 
     const trimmed = title.trim();
     const { title_edited: _previousFlag, ...rest } = day;
-    const firstEvent = day.events.morning[0] ?? day.events.afternoon[0] ?? day.events.night[0];
-    const updatedDay: DailyScheduleDay = trimmed ? { ...rest, title: trimmed, title_edited: true } : { ...rest, title: firstEvent?.title ?? day.title };
+    const updatedDay: DailyScheduleDay = trimmed ? { ...rest, title: trimmed, title_edited: true } : { ...rest, title: fallbackDayTitle(rest, parsed.data) };
 
     const newDays = parsed.data.map((d) => (d === day ? updatedDay : d));
     await saveTravelSchedule(tenantId, travelId, { ...state, dailySchedule: newDays }, client);
@@ -461,7 +460,7 @@ export async function removeDailyScheduleEvent(
     const newDays = days.flatMap((d) => {
       if (d !== day) return [d];
       if (remaining.length === 0) return [];
-      return [{ ...d, title: d.title === removed.title ? remaining[0].title : d.title, events }];
+      return [{ ...d, title: d.title === removed.title && !d.title_edited ? fallbackDayTitle({ ...d, events }, days) : d.title, events }];
     });
 
     const { travelStartAt, travelEndAt } = scheduleRange(newDays);

@@ -15,7 +15,7 @@ export const keepDailyScheduleEventTool = createTool({
   description:
     'Mantém no dia a dia UM card marcado como "voucher excluído" (date/period/index do resumo do dia a dia): a marca sai e o card ' +
     'fica como evento manual. Use só quando o consultor decidir manter o card; se ele decidir tirar, é "removerEventoDiaADia". ' +
-    'Nunca decida sozinho. A chamada pausa esperando confirmação do consultor antes de gravar.',
+    'Nunca decida sozinho.',
   inputSchema: z.object({
     date: z.string().regex(DAY_REGEX, 'formato esperado: YYYY-MM-DD').describe('Dia do card.'),
     period: schedulePeriodSchema.describe('Período do card: "morning", "afternoon" ou "night".'),

@@ -2,10 +2,11 @@
 // (`schema.ts`, `prompts/system-prompt.ts`), as sugestões (`agents/schedule-suggestion/`) e as tools
 // do Ori que incluem/alteram eventos. Assim um evento gerado, uma sugestão aprovada e um evento
 // criado no chat ficam com a mesma cara no kanban — e seguem as mesmas regras de escrita. Mude o
-// formato só aqui. Cada caminho só acrescenta DE ONDE os dados podem vir (`EVENT_SOURCE_*`).
+// formato padrão só aqui. Cada caminho só acrescenta DE ONDE os dados podem vir (`EVENT_SOURCE_*`).
 //
-// O card é um resumo do que acontece, não uma cópia do voucher: o voucher continua anexo com
-// endereço, telefone, localizador etc. Dois formatos: evento logístico (voo, hotel, transfer...) é
+// É o PADRÃO: o formato que o consultor pedir (memória dele, kind "cards", `formatCardPreferences`)
+// vale acima disto em todo caminho que escreve card — o pedido do consultor é lei. Dois formatos
+// padrão: evento logístico (voo, hotel, transfer...) é
 // dado de consulta rápida, em rótulos; experiência (passeio, restaurante, evento) é contada num
 // parágrafo curto — em rótulos virava "Ocasião: Casamento / Local: Lago Maggiore", repetindo o título.
 
@@ -14,9 +15,18 @@ export const EVENT_TITLE_FORMAT =
   '"Check-in no Urban Hive Milano", "Check-out do Urban Hive Milano", ' +
   '"Retirada do carro Movida em BPS", "Devolução do carro Movida em BPS", "Jantar no Maní", "Casamento de Ana e Pedro".';
 
+// Título do DIA (subtítulo da coluna no kanban), não do evento. Escrito pela LLM no gerador do zero e
+// no modo "encaixar"; sem LLM (evento à mão/chat/sugestão num dia novo), `fallbackDayTitle` monta um
+// no mesmo formato a partir dos cards.
+export const DAY_TITLE_FORMAT =
+  'Título do dia: sempre "Cidade | breve descrição do dia" — a cidade onde o cliente está naquele dia e, depois da barra, o que ' +
+  'marca o dia em poucas palavras (ex: "Paris | Visita aos pontos turísticos", "Milão | Chegada e check-in"). Mais de uma cidade ' +
+  'no mesmo dia (viagem, voo, passeio em outra cidade): as cidades na ordem do dia, separadas por " - " (ex: "Paris - Orlando | ' +
+  'Dia no parque de diversões"). A cidade sai do "place" dos eventos, dos aeroportos/cidades dos voos ou da hospedagem em andamento.';
+
 export const EVENT_CONTENT_FORMAT =
-  'Markdown curto, resumo do que vai acontecer — nunca uma cópia do voucher. Siga o formato do tipo (seção "Como escrever o conteúdo de um evento"). ' +
-  'A primeira linha é SEMPRE o horário. Nunca repita no conteúdo o que o título (ou o "place") já diz — nome da ocasião, da experiência, ' +
+  'Markdown curto, resumo do que vai acontecer. Siga o formato que o consultor pediu, se houver (seção "Como o consultor quer os cards"); senão, o formato padrão do tipo (seção "Como escrever o conteúdo de um evento"). ' +
+  'No formato padrão, a primeira linha é sempre o horário (no do consultor, a ordem é a dele). Nunca repita no conteúdo o que o título (ou o "place") já diz — nome da ocasião, da experiência, ' +
   'do restaurante, do hotel, do lugar —, nem numa linha própria ("**Ocasião:** ...", "**Local:** ...") nem dentro das frases. ' +
   'Só entra o que veio da fonte permitida; nunca assuma nem estime nada (duração, horário, deslocamento, traje, quem vai).';
 
@@ -25,7 +35,7 @@ export const EVENT_CONTENT_FORMAT =
 export const EVENT_FORMAT_GUIDE = [
   '### Eventos logísticos — flight, accommodation, transfer, car_rental, ferry_boat',
   '',
-  'De 1 a 3 linhas "**Rótulo:** valor", com valores enxutos (sem frases). A primeira linha é a do horário. Só estes itens:',
+  'De 1 a 3 linhas "**Rótulo:** valor", com valores enxutos (sem frases). A primeira linha é a do horário. Por padrão, estes itens:',
   '- flight: Embarque (horário + aeroporto de partida), Chegada (horário + aeroporto de chegada, e "dia seguinte" se mudar o dia), Conexão (só se houver: aeroporto e horário).',
   '- accommodation: Check-in / Check-out (horário), Regime (só no check-in, ex: "café da manhã incluso").',
   '- transfer: Busca (horário + ponto de encontro), Destino (só se não estiver no título).',
@@ -58,16 +68,12 @@ export const EVENT_FORMAT_GUIDE = [
   '',
   '### Horário',
   '',
-  'Todo evento tem horário na primeira linha, exatamente como está na fonte (horário local). ' +
+  'No formato padrão, todo evento tem horário na primeira linha, exatamente como está na fonte (horário local). ' +
     'Sem horário nenhum na fonte, escreva o rótulo do tipo com "a confirmar" (ex: "**Horário:** a confirmar", "**Check-in:** a confirmar") — nunca estime um.',
   '',
-  '### Nunca no conteúdo',
+  '### Linha sem dado',
   '',
-  '- Nada que não veio da fonte permitida: nunca assuma nem estime duração ("cerca de 2h"), horário, distância/tempo de deslocamento, ' +
-    'o que o lugar tem ou oferece, clima, traje, preço, quem vai.',
-  '- Endereço, telefone/contato, localizador/código de reserva, número de quarto, políticas de cancelamento, valores pagos, ' +
-    'franquia de bagagem ou texto institucional — isso fica no voucher.',
-  '- Linha sem dado: omita (nunca "não informado"). A única exceção é o horário, que vira "a confirmar".',
+  'Por padrão, omita a linha (nunca "não informado"), menos o horário, que vira "a confirmar". Se o formato do consultor pedir o campo mesmo sem dado, deixe o rótulo em branco pra ele preencher.',
 ].join('\n');
 
 export const EVENT_TYPE_FORMAT =
@@ -79,8 +85,7 @@ export const EVENT_SOURCE_VOUCHER =
 
 export const EVENT_SOURCE_CHAT =
   'Fonte permitida: só o que o consultor disse nesta conversa e os vouchers da viagem. Nada de conhecimento geral sobre o lugar, ' +
-  'nada deduzido, nada do Contexto da Viagem. Se o consultor disser "só isso", o conteúdo é só isso. Endereço/telefone/localizador só se ' +
-  'ele pedir explicitamente pra constar no card.';
+  'nada deduzido, nada do Contexto da Viagem. Se o consultor disser "só isso", o conteúdo é só isso.';
 
 export const EVENT_SOURCE_SUGGESTION =
   'Fonte permitida (sugestão): o parágrafo pode descrever o que é o lugar/atividade com o que se sabe de um lugar real e conhecido. ' +
@@ -167,4 +172,17 @@ export function normalizeEventContent(content: string, title?: string): string {
     })
     .join('\n')
     .trim();
+}
+
+// O formato que o consultor pediu pros cards (memória dele, kind "cards" — `getCardPreferences` em
+// `services/ori-memory-db.ts`). Entra no prompt de todo caminho que escreve card (gerador por voucher,
+// refazer, sugestões, Ori) e vale ACIMA do formato padrão: o que o consultor pede é lei. Vazio = só o
+// padrão.
+export function formatCardPreferences(preferences: string[]): string {
+  if (preferences.length === 0) return '';
+  return `## Como o consultor quer os cards
+
+O consultor pediu este formato. Ele vale ACIMA do formato padrão (rótulos, ordem das linhas, horário na primeira linha, quais itens entram, linha sem dado): siga exatamente, inclusive campos que o padrão deixaria de fora (localizador, documento, bagagem...). Só não invente dado — o que não está na fonte fica em branco ou fora, como ele pediu.
+
+${preferences.map((p) => `- ${p}`).join('\n')}`;
 }

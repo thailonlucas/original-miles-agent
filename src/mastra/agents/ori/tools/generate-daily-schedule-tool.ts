@@ -17,7 +17,7 @@ export const generateDailyScheduleTool = createTool({
     'à mão ou pelo chat e títulos editados dos dias ficam. Use só quando o consultor pedir explicitamente pra montar ou refazer o ' +
     'dia a dia; pra incluir, mudar ou tirar um evento use as tools ' +
     'de um evento. Voucher novo ou alterado já entra sozinho no dia a dia, sem esta tool. Nunca escreva o dia a dia você mesmo na ' +
-    'resposta. A chamada pausa esperando confirmação do consultor antes de executar.',
+    'resposta.',
   inputSchema: z.object({}),
   outputSchema: z.unknown(),
   execute: async (_, { requestContext }) => {

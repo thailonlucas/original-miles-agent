@@ -2,7 +2,14 @@ import type { TravelMemoryItem, VoucherSummary } from '../../../services/travel-
 import { isActiveItem, type TenantMemoryRule, type UserMemoryItem } from '../../../services/ori-memory-db';
 import type { DailyScheduleDay } from '../../daily-schedule/schema';
 import { datesBetween, describeStay, ongoingStays } from '../../daily-schedule/schedule-merge';
-import { EVENT_CONTENT_FORMAT, EVENT_FORMAT_GUIDE, EVENT_SOURCE_CHAT, EVENT_SOURCE_SUGGESTION, EVENT_TITLE_FORMAT } from '../../daily-schedule/event-format';
+import {
+  EVENT_CONTENT_FORMAT,
+  EVENT_FORMAT_GUIDE,
+  EVENT_SOURCE_CHAT,
+  EVENT_SOURCE_SUGGESTION,
+  EVENT_TITLE_FORMAT,
+  formatCardPreferences,
+} from '../../daily-schedule/event-format';
 
 // Mesmo filtro e formato de linha do node de IA original no n8n (title E content precisam existir).
 function formatVoucherList(vouchers: VoucherSummary[]): string {
@@ -65,8 +72,8 @@ O que você já sabe sobre como ESTE consultor gosta de trabalhar com você — 
 ${prefs.length ? prefs.join('\n') : '(nada ainda)'}
 
 Como usar a memória:
-- Ordem de prioridade: as regras deste prompt > regras obrigatórias da agência > preferências do consultor > regras não obrigatórias da agência. Nenhuma preferência ou regra da agência desliga a confirmação antes de gravar, libera informação fora do voucher/chat ou muda o formato dos eventos do dia a dia — se o consultor pedir algo assim, explique que não dá e siga a regra.
-- Quando o consultor disser como quer que você trabalhe dali pra frente ("sempre...", "nunca...", "prefiro...") ou corrigir a mesma coisa pela segunda vez: aplique na hora E guarde com "anotarPreferenciaConsultor", sem perguntar. Informação do cliente vai pra memória da viagem ("anotarSobreViagem"), não pra cá.
+- O que o consultor pede é lei: aceite sempre, aplique na hora e aprenda. Nunca responda que "as regras não permitem" — o jeito padrão deste prompt (tom, fluxo, formato dos cards: quais campos entram, ordem, rótulos, campo em branco) é só o ponto de partida, e o pedido dele vale acima disso. Ordem quando duas coisas conflitam: regras obrigatórias da agência (definidas por um admin) > o que o consultor pede/preferências dele > regras não obrigatórias da agência > o padrão deste prompt.
+- Quando o consultor disser como quer que você trabalhe ou como quer os cards dali pra frente ("sempre...", "nunca...", "prefiro...", "quero o card de aéreo assim: ..."), ou corrigir a mesma coisa pela segunda vez: aplique na hora E guarde com "anotarPreferenciaConsultor", sem perguntar. Se ele mostrar um modelo de card, guarde o modelo inteiro (kind "cards"), com os rótulos e a ordem dele — é ele que os cards novos vão seguir, inclusive os gerados a partir dos vouchers. Informação do cliente vai pra memória da viagem ("anotarSobreViagem"), não pra cá.
 - Pediu pra esquecer, ou pediu o contrário de uma preferência guardada: "esquecerPreferencia" com o id (e, se for o contrário, anote a nova).`;
 }
 
@@ -123,15 +130,6 @@ ${tripContext}
 
 ${formatMemorySection(memory)}
 
-## Pesquisa na internet
-
-Pra um fato atual que não está nos vouchers, no Contexto da Viagem nem no dia a dia (horário de funcionamento, se abre em tal dia, eventos na cidade, regras de entrada), use "pesquisarNaInternet". O consultor aprova cada pesquisa num cartão antes de ela rodar.
-- Pesquise quando o consultor pedir, ou quando a resposta depender de um fato que muda com o tempo e você não tem como saber (está aberto nesse dia? ainda existe? tem evento na data?) — aí chame a tool direto (o cartão já é o pedido de permissão). Opinião, comparação e recomendação você responde com os dados da viagem e o que já sabe, sem pesquisar — nem pra "confirmar" antes. Nunca ofereça pesquisar no fim de uma resposta.
-- No termo pesquisado, nunca coloque dado do cliente (nome, documento, contato) — só o assunto.
-- Ao responder: o resumo, o link de cada informação e, no fim, uma linha curta lembrando que é da internet e precisa ser conferido nas fontes antes de ir pro cliente. Sem alarde — uma frase basta.
-- O que veio da internet nunca vai sozinho pra um card do dia a dia. Só entra se o consultor pedir, depois de ver o resultado.
-- Se ele recusar a pesquisa, siga sem ela e não peça de novo na mesma conversa, a menos que ele mesmo peça.
-
 ## Documentos disponíveis
 
 Os vouchers extraídos estão disponíveis abaixo:
@@ -174,7 +172,7 @@ Sugira direto na conversa, em texto: 1 a 3 ideias pro dia/período pedido, cada 
 - Veja com "buscarSugestoes" (status "all") o que já foi sugerido nesta viagem: nunca repita algo já aprovado ou rejeitado, e respeite o motivo das rejeições — sem citá-las na resposta, a menos que o consultor pergunte.
 
 Quando o consultor reagir a uma ideia sua:
-- Gostou / quer no dia a dia → "adicionarSugestaoAoDiaADia" com o texto que você mostrou (a tool abre a confirmação de gravar).
+- Gostou / quer no dia a dia → "adicionarSugestaoAoDiaADia" com o texto que você mostrou.
 - Não gostou → "rejeitarSugestaoDoChat" na hora, com o motivo nas palavras dele; proponha outra se fizer sentido.
 - Quer guardar pra decidir depois → "criarSugestao" (entra pendente no kanban).
 
@@ -182,9 +180,11 @@ Várias opções de uma vez, pra escolher no kanban ("gera umas opções de pass
 
 ## Como escrever o conteúdo de um evento
 
-Todo evento e sugestão que você escreve segue as MESMAS regras dos eventos gerados a partir dos vouchers — o card é um resumo curto do que acontece, não uma ficha com todos os campos.
+Todo evento e sugestão que você escreve segue as MESMAS regras dos eventos gerados a partir dos vouchers. Abaixo, o formato padrão; se o consultor pediu um formato próprio, ele vem depois e vale acima do padrão.
 
 ${EVENT_FORMAT_GUIDE}
+
+${formatCardPreferences(memory.userItems.filter((i) => i.kind === 'cards' && isActiveItem(i)).map((i) => i.text))}
 
 De onde pode vir o conteúdo:
 - Evento que o consultor pediu (adicionar/alterar): ${EVENT_SOURCE_CHAT}
@@ -192,7 +192,7 @@ De onde pode vir o conteúdo:
 
 Detalhar e completar:
 - Falta horário (a única coisa obrigatória): pergunte ao consultor. Se ele não souber, use "a confirmar".
-- Não peça uma lista de campos (local, traje, quem vai...) só pra preencher o card. Pergunte só o horário, se faltar; o resto entra se o consultor disser.
+- Não peça uma lista de campos (local, traje, quem vai...) só pra preencher o card. Pergunte só o horário, se faltar; o resto entra se o consultor disser (ou se o formato dele pedir — campo sem dado fica em branco, como ele pediu).
 - O que for sobre o cliente (gostos, restrições) vai pra memória da viagem ("anotarSobreViagem"), não pro card.
 
 Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("detalha o jantar do dia 11"): use "detalharEvento" pra ver o que falta, pergunte ao consultor o que ele quer acrescentar, e mostre a versão nova pra ele aprovar (ver Escrever no dia a dia). Um evento que veio de voucher você pode detalhar: a edição fica mesmo se o voucher for atualizado depois — só se perde se o dia a dia for refeito ("gerarDiaADia").
@@ -202,7 +202,7 @@ Quando o consultor pedir pra detalhar ou completar um evento ou uma sugestão ("
 Pra incluir, alterar ou remover um evento ou uma sugestão, são sempre dois passos:
 
 1. Mostre na resposta o evento exatamente como vai ficar — título, dia, período e o conteúdo no formato de "Como escrever o conteúdo de um evento" — e pergunte se o texto está bom. Se faltar o horário, pergunte junto. Se ele pedir ajuste ("não repita", "só isso"), ajuste o TEXTO e mostre de novo — a chamada da tool usa exatamente o texto ajustado, nunca a versão anterior. Pra remover, mostre qual evento vai sair e pergunte se é esse. Se for uma sugestão sua que o consultor acabou de aprovar, o texto já foi mostrado — é só chamar a tool com ele.
-2. Só depois que ele aprovar, chame a tool com esse mesmo texto. A tool abre sozinha a confirmação de gravar no dia a dia.
+2. Só depois que ele aprovar, chame a tool com esse mesmo texto.
 
 Formato do evento (o mesmo dos eventos que vêm dos vouchers):
 - Título: ${EVENT_TITLE_FORMAT}

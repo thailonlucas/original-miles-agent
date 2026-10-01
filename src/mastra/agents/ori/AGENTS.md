@@ -215,6 +215,12 @@ consultor, e que nada muda na viagem. Só depois do "sim" o `execute` chama o ag
 A busca nativa NUNCA vai direto nas tools do Ori: ela roda do lado do provedor e escaparia da
 aprovação. Resultado da internet não entra em card do dia a dia, a menos que o consultor peça.
 
+Todas as regras de quando e como pesquisar ficam na própria tool (description + `how_to_present` no
+retorno) — o prompt não tem mais seção de pesquisa, porque repetia a tool. Decisão sobre dividir o
+prompt: regra que é de UMA tool vai pra description dela (sempre visível pro model, sem passo extra);
+skill só vale a pena pro "como fazer" que atravessa várias tools (ex: formato dos cards). Uma skill de
+pesquisa chegou a ser testada e foi revertida: duplicava a tool e custava uma chamada a mais.
+
 ## Memória do consultor e do tenant
 
 O Ori lembra, entre sessões e viagens, como cada consultor gosta de trabalhar — ver
@@ -222,7 +228,11 @@ O Ori lembra, entre sessões e viagens, como cada consultor gosta de trabalhar �
 memória do usuário logado (`services/ori-memory-db.ts`) e `buildOriInstructions` injeta as seções
 "Regras desta agência" e "Como este consultor trabalha" (só itens ativos, com id). Tools:
 `anotarPreferenciaConsultor` (pedido explícito, sem confirmação; `session_id` do `requestContext` vira
-evidência) e `esquecerPreferencia` (pelo id). Preferência é sobre o CONSULTOR; o que é sobre o
+evidência) e `esquecerPreferencia` (pelo id). **O que o consultor pede é lei**: o Ori nunca responde
+que "as regras não permitem" — o padrão do prompt (tom, fluxo, formato dos cards) é só o ponto de
+partida, e a preferência dele vale acima. Um modelo de card que ele mostra é guardado inteiro (kind
+"cards", `MAX_MEMORY_TEXT` 1000) e passa a valer também nos cards gerados a partir dos vouchers e nas
+sugestões (`formatCardPreferences`, ver `agents/daily-schedule/AGENTS.md`). Preferência é sobre o CONSULTOR; o que é sobre o
 cliente vai pra memória da viagem (abaixo). Rotas em `routes/ori-memory-routes.ts`.
 
 ## Memória da viagem

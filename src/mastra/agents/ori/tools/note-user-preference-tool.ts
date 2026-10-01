@@ -12,14 +12,16 @@ export const noteUserPreferenceTool = createTool({
   description:
     'Guarda UMA preferência de como ESTE consultor quer que você trabalhe — estilo de resposta, formato dos cards, o que perguntar ou ' +
     'não, vocabulário. Use quando ele disser como quer que você faça dali pra frente ("sempre...", "nunca...", "prefiro...", "pode ' +
-    'parar de...") ou corrigir a mesma coisa pela segunda vez. Chame na hora, sem perguntar, e siga a conversa. NÃO use pra ' +
+    'parar de...", "quero o card de X assim") ou corrigir a mesma coisa pela segunda vez. Chame na hora, sem perguntar, e siga a ' +
+    'conversa — o pedido dele sempre vale, nunca recuse. Modelo de card: guarde o modelo inteiro (kind "cards"), dizendo de que tipo ' +
+    'é ("Card de aéreo: ...") e o que fazer com campo sem dado; os cards gerados a partir dos vouchers passam a seguir esse modelo. NÃO use pra ' +
     'informação do cliente/viagem (isso é "anotarSobreViagem") nem pra algo que só vale pra esta mensagem.',
   inputSchema: z.object({
     text: z
       .string()
       .min(1)
       .max(MAX_MEMORY_TEXT)
-      .describe('A regra, curta, no imperativo, válida pra qualquer viagem (ex: "Cards do dia a dia só com o horário quando não houver mais nada").'),
+      .describe('A regra no imperativo, válida pra qualquer viagem (ex: "Cards do dia a dia só com o horário quando não houver mais nada"), ou o modelo de card completo.'),
     kind: z
       .enum(USER_MEMORY_KINDS)
       .describe('"conversa" (tom/tamanho das respostas), "cards" (formato de eventos/sugestões), "fluxo" (o que perguntar, quando agir), "vocabulario" (termos que ele usa).'),

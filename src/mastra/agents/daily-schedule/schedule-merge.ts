@@ -36,7 +36,8 @@ function filterEvents(days: DailyScheduleDay[], keep: (event: DailyScheduleEvent
     if (remaining.length === 0) return [];
 
     const titleWasRemoved = allEvents(day).some((event) => !keep(event) && event.title === day.title);
-    return [{ ...day, title: titleWasRemoved && !day.title_edited ? remaining[0].title : day.title, events }];
+    const kept = { ...day, events };
+    return [{ ...kept, title: titleWasRemoved && !day.title_edited ? fallbackDayTitle(kept, days) : day.title }];
   });
 }
 
@@ -123,7 +124,8 @@ export function insertEventIntoDays(
     list.splice(Math.max(0, Math.min(position, list.length)), 0, event);
     return days.map((d) => (d === day ? { ...d, events: { ...d.events, [period]: list } } : d));
   }
-  const newDay: DailyScheduleDay = { date, title: event.title, events: { morning: [], afternoon: [], night: [], [period]: [event] } };
+  const events = { morning: [], afternoon: [], night: [], [period]: [event] };
+  const newDay: DailyScheduleDay = { date, title: fallbackDayTitle({ date, title: '', events }, days), events };
   return mergeDays(days, [newDay], 'base');
 }
 
@@ -195,6 +197,7 @@ export function applyVoucherOperations(
   days: DailyScheduleDay[],
   voucherId: string,
   operations: VoucherOperation[],
+  dayTitles: { date: string; title: string }[] = [],
 ): { days: DailyScheduleDay[]; skipped: VoucherOperation[] } {
   const skipped: VoucherOperation[] = [];
   let result = days;
@@ -206,6 +209,9 @@ export function applyVoucherOperations(
       skipped.push(op);
       continue;
     }
+    // "enrich" sem nada pra mudar não liga o voucher ao card — senão um card de outro compromisso
+    // ganharia um vínculo que ninguém pediu.
+    if (!op.content?.trim() && !op.title?.trim() && !op.place && !op.observation?.trim()) continue;
     const content = op.content?.trim();
     const title = op.title?.trim() || current.title;
     const observation = op.observation?.trim();
@@ -243,6 +249,14 @@ export function applyVoucherOperations(
       source: { type: 'voucher', voucher_id: voucherId },
     };
     result = insertEventIntoDays(result, op.date, op.period, event, op.index ?? undefined);
+  }
+
+  // Títulos dos dias tocados, escritos pela LLM no formato "Cidade | descrição" — nunca por cima de um
+  // título que o consultor editou, nem num dia que não existe.
+  for (const { date, title } of dayTitles) {
+    const trimmed = title.trim();
+    if (!trimmed) continue;
+    result = result.map((d) => (d.date === date && !d.title_edited && d.title !== trimmed ? { ...d, title: trimmed } : d));
   }
   return { days: result, skipped };
 }
@@ -330,4 +344,26 @@ export function ongoingStays(days: DailyScheduleDay[]): Map<string, OngoingStay[
     }
   }
   return byDate;
+}
+
+// Cidade de um "place" no formato "Lugar, Cidade" ("Urban Hive Milano, Milão" -> "Milão").
+function cityFromPlace(place: string | null | undefined): string | null {
+  const parts = (place ?? '').split(',').map((p) => p.trim()).filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 1] : null;
+}
+
+// Título do dia sem LLM, no formato de `DAY_TITLE_FORMAT` ("Cidade | descrição"): as cidades dos
+// cards do dia (pelo `place`, na ordem dos períodos) ou, sem nenhuma, a da hospedagem em andamento; a
+// descrição é o título do primeiro card. Pra quando o código precisa dar título a um dia sem chamar a
+// LLM (evento à mão/chat/sugestão num dia novo, título apagado, card que dava nome ao dia removido).
+// `allDays` é o dia a dia em volta, pra achar a hospedagem em andamento.
+export function fallbackDayTitle(day: DailyScheduleDay, allDays: DailyScheduleDay[]): string {
+  const events = allEvents(day);
+  const description = events[0]?.title ?? day.title;
+  const fromEvents = events.map((e) => cityFromPlace(e.place)).filter((c): c is string => Boolean(c));
+  const cities = fromEvents.length
+    ? fromEvents
+    : (ongoingStays([...allDays.filter((d) => d.date !== day.date), day]).get(day.date) ?? []).map((s) => cityFromPlace(s.place) ?? s.place);
+  const unique = [...new Set(cities.filter(Boolean))];
+  return unique.length ? `${unique.join(' - ')} | ${description}` : description;
 }

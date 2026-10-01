@@ -109,7 +109,15 @@ são enriquecidos como qualquer outro. Eventos antigos com `suggested: true` con
 - Array **esparso**: só dias com pelo menos um evento. O front preenche os dias vazios entre o
   primeiro e o último ("Dia livre", `fillDailyScheduleGaps` no front), então o kanban continua
   mostrando a viagem inteira.
-- O título do dia (subtítulo da coluna no kanban) pode ser editado à mão
+- O título do dia (subtítulo da coluna no kanban) segue sempre `DAY_TITLE_FORMAT` (`event-format.ts`):
+  "Cidade | breve descrição do dia" ("Paris | Visita aos pontos turísticos"); mais de uma cidade no dia,
+  separadas por " - " na ordem do dia ("Paris - Orlando | Dia no parque de diversões"). Quem escreve:
+  a LLM no refazer (`title` de cada dia) e no encaixar (`day_titles`, só dos dias em que criou card;
+  `applyVoucherOperations` aplica). Sem LLM — evento à mão/chat/sugestão num dia novo, título apagado,
+  card que dava nome ao dia removido — `fallbackDayTitle` monta no mesmo formato: cidades pelo `place`
+  dos cards ("Lugar, Cidade"), senão pela hospedagem em andamento, e o título do primeiro card como
+  descrição. Títulos antigos (fora do formato) só mudam quando o dia é tocado.
+- O título do dia pode ser editado à mão
   (`PATCH /travel_agent/daily-schedule/day` → `updateDailyScheduleDayTitle`, `services/travel-db.ts`).
   O dia fica com `title_edited: true` e nenhuma junção troca mais esse título (`mergeDays`,
   `filterEvents`). Encaixar um voucher nunca troca título de dia que já existe; dia novo nasce com o
@@ -158,11 +166,16 @@ são enriquecidos como qualquer outro. Eventos antigos com `suggested: true` con
 - `schema.ts` — formato gravado (`dailyScheduleSchema`, com `source`/`linked_voucher_ids`/
   `removed_vouchers`) e os formatos da LLM (`voucherScheduleResultSchema` do zero, com `voucher_id`;
   `voucherOperationsResultSchema` pra encaixar).
-- `event-format.ts` — as regras de escrita de TODO evento (gerador, sugestões, tools do Ori): um evento
+- `event-format.ts` — o formato PADRÃO de todo evento (gerador, sugestões, tools do Ori): um evento
   gerado, uma sugestão aprovada e um evento do chat ficam com a mesma cara e as mesmas regras. Mude só
-  aqui. `EVENT_CONTENT_FORMAT` (resumo) + `EVENT_FORMAT_GUIDE` (guia completo): o card é um resumo do
-  que acontece, sem repetir título/`place` nem o que já está no voucher (endereço, telefone,
-  localizador). Logísticos (voo, hotel, transfer, carro, balsa): 1–3 rótulos (horários, aeroportos,
+  aqui. **O formato que o consultor pede vale acima do padrão**: `formatCardPreferences` monta a seção
+  "Como o consultor quer os cards" a partir da memória dele (kind "cards", `getCardPreferences` em
+  `services/ori-memory-db.ts`) e entra no prompt do gerador por voucher, do refazer (de quem
+  subiu/alterou o voucher ou pediu o refazer), das sugestões (de quem pediu) e do Ori. Ex: um modelo de
+  card de aéreo com localizador, bilhete e "Bagagem:" em branco. Não existe mais lista do que "nunca"
+  entra no card — só não se inventa dado (a fonte de cada caminho continua em `EVENT_SOURCE_*`).
+  `EVENT_CONTENT_FORMAT` (resumo) + `EVENT_FORMAT_GUIDE` (guia completo do padrão): resumo do que
+  acontece, sem repetir título/`place`. Logísticos (voo, hotel, transfer, carro, balsa): 1–3 rótulos (horários, aeroportos,
   regime). Experiências (passeio, restaurante, other): horário + parágrafo curto + linhas
   `**Dica:**`/`**Logística:**`/`**Atenção:**`. Todo evento começa pelo horário ("a confirmar" se a
   fonte não tiver); nada de duração/deslocamento estimados. Cada caminho junta a sua fonte permitida:

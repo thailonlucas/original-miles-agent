@@ -43,11 +43,12 @@ export async function suggestActivitiesForDay(
   prompt: string | null = null,
   quantity = 3,
   summary: string | null = null,
+  cardPreferences: string[] = [],
 ): Promise<ScheduleSuggestionResult> {
   const { object } = await scheduleSuggestionAgent.generate(
     buildSuggestionUserMessage(day, existingDay, fullSchedule, vouchers, decisionHistory, prompt, quantity, summary),
     {
-      instructions: buildSuggestionInstructions(quantity, prompt, summary),
+      instructions: buildSuggestionInstructions(quantity, prompt, summary, cardPreferences),
       // Sobrescreve o `structuredOutput` fixo do `defaultOptions` (quantity=3) com um schema
       // construído pra este `quantity` — ver comentário em `schema.ts` sobre por que a descrição
       // do campo "suggestions" (não só a instrução em texto livre) precisa carregar o número real.
@@ -75,6 +76,7 @@ export async function regeneratePeriodSuggestions(
   summary: string | null,
   keep: ScheduleSuggestionEvent[],
   replace: { suggestion: ScheduleSuggestionEvent; reason: string }[],
+  cardPreferences: string[] = [],
 ): Promise<ScheduleSuggestionEvent[]> {
   if (replace.length === 0) return [];
 
@@ -84,7 +86,7 @@ export async function regeneratePeriodSuggestions(
   const { object } = await scheduleSuggestionAgent.generate(
     buildSuggestionUserMessage(day, existingDay, fullSchedule, vouchers, decisionHistory, prompt, replace.length, summary, repair),
     {
-      instructions: buildSuggestionInstructions(replace.length, prompt, summary),
+      instructions: buildSuggestionInstructions(replace.length, prompt, summary, cardPreferences),
       structuredOutput: { schema: buildScheduleSuggestionPeriodSchema(replace.length) },
       requestContext: new RequestContext([['tenant_id', tenantId]]),
     },
