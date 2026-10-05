@@ -35,7 +35,7 @@ export const EVENT_CONTENT_FORMAT =
 export const EVENT_FORMAT_GUIDE = [
   '### Eventos logísticos — flight, accommodation, transfer, car_rental, ferry_boat',
   '',
-  'De 1 a 3 linhas "**Rótulo:** valor", com valores enxutos (sem frases). A primeira linha é a do horário. Por padrão, estes itens:',
+  'De 1 a 3 itens de lista "- **Rótulo:** valor" (sempre com o "- " na frente, um item por linha), com valores enxutos (sem frases). O primeiro item é o do horário. Por padrão, estes itens:',
   '- flight: Embarque (horário + aeroporto de partida), Chegada (horário + aeroporto de chegada, e "dia seguinte" se mudar o dia), Conexão (só se houver: aeroporto e horário).',
   '- accommodation: Check-in / Check-out (horário), Regime (só no check-in, ex: "café da manhã incluso").',
   '- transfer: Busca (horário + ponto de encontro), Destino (só se não estiver no título).',
@@ -43,8 +43,8 @@ export const EVENT_FORMAT_GUIDE = [
   '- ferry_boat: Embarque (horário + porto), Chegada (horário + porto).',
   '',
   'Exemplo (title "Voo TP 0082 São Paulo → Lisboa"):',
-  '**Embarque:** 22h40 em Guarulhos (GRU)',
-  '**Chegada:** 11h05 em Lisboa (LIS), dia seguinte',
+  '- **Embarque:** 22h40 em Guarulhos (GRU)',
+  '- **Chegada:** 11h05 em Lisboa (LIS), dia seguinte',
   '',
   '### Experiências — experience, restaurant_reservation, other',
   '',
@@ -119,7 +119,8 @@ export function eventDetailsFor(type: string): EventDetail[] {
 
 const normalizeText = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 
-const LABEL_LINE = /^\s*\*\*([^*]+?):\*\*\s*(.*)$/;
+// Aceita a linha solta ("**Rótulo:** valor") e como item de lista ("- **Rótulo:** valor", formato dos logísticos).
+const LABEL_LINE = /^\s*(?:[-*+]\s+)?\*\*([^*]+?):\*\*\s*(.*)$/;
 
 // Compara o `content` de um evento com o mínimo do tipo dele. Um item "a confirmar" conta como falta.
 export function eventDetailGaps(event: { type: string; content: string }): { filled: string[]; missing: string[] } {

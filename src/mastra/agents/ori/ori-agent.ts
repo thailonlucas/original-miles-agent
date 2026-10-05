@@ -133,20 +133,6 @@ function describeSlot(date: unknown, period: unknown): string {
 // dos `args` que o model decidiu passar — a geração está pausada, a LLM ainda não escreveu nada.
 // Sempre diz O QUÊ vai ser feito (a sugestão pelo nome, o dia e o período), nunca só "esta
 // sugestão", pro consultor não aprovar no escuro.
-// Texto do cartão de aprovação da pesquisa na internet. É a última coisa que o consultor lê antes de
-// decidir, então diz em poucas linhas: o que vai sair daqui (só o termo), o que volta (resumo com
-// fontes) e o que ele precisa fazer (conferir antes de repassar).
-function webSearchApprovalQuestion(query: string): string {
-  return [
-    `Posso pesquisar na internet: "${query}"?`,
-    '',
-    '• Só esse termo vai para o buscador — nada do cliente.',
-    '• Eu trago um resumo com o link de cada informação.',
-    '• A internet pode estar desatualizada ou errada: confira nas fontes antes de repassar ao cliente. A checagem fica com você.',
-    '• Nada é alterado na viagem.',
-  ].join('\n');
-}
-
 // Cartão de "refazer o dia a dia": os cards de voucher são refeitos (edições neles se perdem) e o
 // resto fica — o cartão diz os números desta viagem, não um aviso genérico.
 async function describeScheduleRebuild(tenantId: string, travelId: string): Promise<string> {
@@ -220,9 +206,6 @@ async function describePendingApproval(tenantId: string, travelId: string, toolN
     const moveTo = args.newDate || args.newPeriod ? ` para ${describeSlot(args.newDate ?? args.date, args.newPeriod ?? args.period)}` : '';
     const position = typeof args.newIndex === 'number' ? `, como ${args.newIndex + 1}º evento do período` : '';
     return `Confirma que quer alterar ${what}${moveTo}${position}?`;
-  }
-  if (toolName === internetSearchTool.id) {
-    return webSearchApprovalQuestion(String(args.query ?? ''));
   }
   if (toolName === generateDailyScheduleTool.id) {
     return describeScheduleRebuild(tenantId, travelId);

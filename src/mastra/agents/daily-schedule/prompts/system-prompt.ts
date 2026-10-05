@@ -46,11 +46,11 @@ Estas duas regras são as únicas exceções a "nunca duplique": o voo continua 
 
 - Voo de madrugada — partida entre 00:00 e 05:59 (horário local da partida): o dia do cliente começa no dia ANTERIOR, porque ele precisa se preparar e ir pro aeroporto na noite antes. Gere, além do voo, um evento na "night" do dia anterior à partida:
   - "title": "Ida ao aeroporto — Voo TP 0824 às 3h10" (voo e horário de partida do voucher).
-  - "content": só "**Embarque:** 3h10 em Guarulhos (GRU)" (horário e aeroporto de partida).
+  - "content": só "- **Embarque:** 3h10 em Guarulhos (GRU)" (horário e aeroporto de partida).
   - "place": o aeroporto de partida.
 - Voo que chega em outro dia — data de chegada (horário local da chegada) diferente da data de partida, ex: voo noturno ou longo: gere, além do voo, um evento no dia da chegada, no período do horário de chegada:
   - "title": "Chegada do voo TP 0824 em Milão Malpensa".
-  - "content": só "**Chegada:** 11h05 em Milão Malpensa (MXP)" (horário e aeroporto de chegada).
+  - "content": só "- **Chegada:** 11h05 em Milão Malpensa (MXP)" (horário e aeroporto de chegada).
   - "place": o aeroporto de chegada.
 - Só aplique quando o voucher trouxer o horário (madrugada) ou a data/hora de chegada (outro dia) — sem o dado, não deduza.`;
 

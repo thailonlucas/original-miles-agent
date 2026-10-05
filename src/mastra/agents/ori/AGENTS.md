@@ -223,13 +223,12 @@ sugerido). O Ori só pergunta o horário se faltar — antes pedia local/traje/q
 
 ## Pesquisa na internet
 
-`pesquisarNaInternet` (`tools/web-search-tool.ts`, `requireApproval: true`): o cartão
-(`webSearchApprovalQuestion` em `ori-agent.ts`) mostra o termo e avisa, em quatro linhas, que só o
-termo sai daqui, que volta um resumo com fontes, que a internet pode estar errada e a checagem é do
-consultor, e que nada muda na viagem. Só depois do "sim" o `execute` chama o agente `web-research`
-(`agents/web-research/`), que tem a busca nativa da OpenAI (`webSearchTool` do Mastra) + `webFetchTool`.
-A busca nativa NUNCA vai direto nas tools do Ori: ela roda do lado do provedor e escaparia da
-aprovação. Resultado da internet não entra em card do dia a dia, a menos que o consultor peça.
+`pesquisarNaInternet` (`tools/web-search-tool.ts`) roda SEM aprovação do consultor: o Ori pesquisa
+direto quando precisa. O `execute` chama o agente `web-research` (`agents/web-research/`), que tem a
+busca nativa da OpenAI (`webSearchTool` do Mastra) + `webFetchTool`. A busca nativa continua fora das
+tools do Ori: assim só o termo (sem dado do cliente) sai daqui, por um ponto de entrada único.
+O `how_to_present` do retorno manda lembrar que é informação da internet, a conferir nas fontes.
+Resultado da internet não entra em card do dia a dia, a menos que o consultor peça.
 
 Todas as regras de quando e como pesquisar ficam na própria tool (description + `how_to_present` no
 retorno) — o prompt não tem mais seção de pesquisa, porque repetia a tool. Decisão sobre dividir o

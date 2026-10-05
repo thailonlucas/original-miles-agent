@@ -4,15 +4,14 @@ Leia este arquivo antes de alterar qualquer coisa nesta pasta.
 
 ## Objetivo
 
-Pesquisar na internet um termo que o consultor APROVOU e devolver um resumo curto (até 150 palavras)
-com o link de cada informação. Só é chamado pelo `execute` da tool `pesquisarNaInternet` do Ori
-(`agents/ori/tools/web-search-tool.ts`), que tem `requireApproval: true`.
+Pesquisar na internet um termo pedido pelo Ori e devolver um resumo curto (até 150 palavras) com o
+link de cada informação. Só é chamado pelo `execute` da tool `pesquisarNaInternet` do Ori
+(`agents/ori/tools/web-search-tool.ts`), que roda sem aprovação do consultor.
 
 ## Regras
 
-- Nunca registrar `webSearchTool` direto no Ori: a busca nativa do provedor roda na OpenAI e escapa
-  do `requireApproval` — o Ori poderia buscar sem o consultor aprovar. A aprovação fica na tool do Ori;
-  este agente só roda depois dela.
+- Nunca registrar `webSearchTool` direto no Ori: a busca nativa do provedor roda na OpenAI com o
+  contexto inteiro do agente (dados da viagem/cliente). Aqui ela só enxerga o termo.
 - Recebe só o termo (e, opcional, um link) — nada da viagem nem do cliente. O termo é o que vai pro
   buscador.
 - Sem structured output: a combinação com a tool nativa do provedor não é documentada no Mastra.
